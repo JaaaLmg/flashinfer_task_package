@@ -1,0 +1,3 @@
+case_id,name,batch_size,seq_len,total_q,total_kv,max_q,max_kv,visible_pairs,candidate_ms,flashinfer_ms,slowdown_vs_flashinfer,effective_tflops,candidate_repeats,flashinfer_repeats,match_ratio,max_abs_error,severe_error_count,passed
+14,single_token,1,1,1,1,1,1,1,0.022613334159056347,0.02263039946556091,0.999245912272537,0.0007245282754307339,3,20,1.0,0.0,0,True
+15,non_power_of_two,2,65,98,98,65,65,2706,0.14865066607793173,0.022758400440216063,6.5316833873462015,0.29825028820763466,3,20,1.0,0.015625,0,True
