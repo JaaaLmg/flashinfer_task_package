@@ -7691,7 +7691,9 @@ __device__ __forceinline__ void load_q_global_smem(
 #pragma unroll
       for (uint32_t j = 0; j < 2; ++j) {
         uint32_t q, r;
-        group_size.divmod(packed_offset + lane_idx / 8 + mma_q * 16 + j * 8, q, r);
+        const uint32_t packed = packed_offset + lane_idx / 8 + mma_q * 16 + j * 8;
+        q = packed >> 3;
+        r = packed & 7;
         const uint32_t q_idx = q;
         DTypeQ* q_ptr =
             q_ptr_base + q * q_stride_n + r * q_stride_h + (lane_idx % 8) * upcast_size<DTypeQ>();
@@ -8211,9 +8213,11 @@ __device__ __forceinline__ void logits_transform(
   uint32_t q[KTraits::NUM_MMA_Q], r[KTraits::NUM_MMA_Q];
 #pragma unroll
   for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
-    group_size.divmod(qo_packed_idx_base + mma_q * 16 + lane_idx % 16, q[mma_q], r[mma_q]);
+    const uint32_t packed = qo_packed_idx_base + mma_q * 16 + lane_idx % 16;
+    q[mma_q] = packed >> 3;
+    r[mma_q] = packed & 7;
   }
-  uint32_t qo_head_idx = kv_head_idx * group_size;
+  uint32_t qo_head_idx = kv_head_idx << 3;
 #pragma unroll
   for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
     const uint32_t q_idx = q[mma_q];
@@ -8242,28 +8246,23 @@ __device__ __forceinline__ void logits_mask(
   constexpr uint32_t NUM_MMA_Q = KTraits::NUM_MMA_Q;
   constexpr uint32_t NUM_MMA_KV = KTraits::NUM_MMA_KV;
   using DTypeQKAccum = typename KTraits::DTypeQKAccum;
-  constexpr MaskMode MASK_MODE = KTraits::MASK_MODE;
-  uint32_t q[NUM_MMA_Q], r[NUM_MMA_Q];
+  static_assert(KTraits::MASK_MODE == MaskMode::kCausal);
+  uint32_t q[NUM_MMA_Q];
 #pragma unroll
   for (uint32_t mma_q = 0; mma_q < NUM_MMA_Q; ++mma_q) {
-    group_size.divmod(qo_packed_idx_base + mma_q * 16 + lane_idx % 16, q[mma_q], r[mma_q]);
+    const uint32_t packed = qo_packed_idx_base + mma_q * 16 + lane_idx % 16;
+    q[mma_q] = packed >> 3;
   }
-  uint32_t qo_head_idx = kv_head_idx * group_size;
 #pragma unroll
   for (uint32_t mma_q = 0; mma_q < NUM_MMA_Q; ++mma_q) {
     const uint32_t q_idx = q[mma_q];
-    qo_head_idx += r[mma_q];
 #pragma unroll
     for (uint32_t mma_kv = 0; mma_kv < NUM_MMA_KV; ++mma_kv) {
       uint32_t kv_idx_star = kv_idx_base + mma_kv * 16 + lane_idx / 16 * 4;
 #pragma unroll
       for (uint32_t reg_id = 0; reg_id < 4; ++reg_id) {
         const uint32_t kv_idx = kv_idx_star + (reg_id % 4);
-        const bool mask =
-            (!(MASK_MODE == MaskMode::kCausal
-                   ? (kv_idx + qo_len > kv_len + q_idx || (kv_idx >= chunk_end))
-                   : kv_idx >= chunk_end)) &&
-            variant.LogitsMask(params, batch_idx, q_idx, kv_idx, qo_head_idx, kv_head_idx);
+        const bool mask = !(kv_idx + qo_len > kv_len + q_idx || kv_idx >= chunk_end);
         s_frag[mma_q][mma_kv][reg_id] =
             (mask) ? s_frag[mma_q][mma_kv][reg_id] : (KTraits::MaskFillValue);
       }
@@ -8802,7 +8801,9 @@ __device__ __forceinline__ void write_o_reg_gmem_b128(
           lane_idx % 16;
 
       uint32_t q, r;
-      group_size.divmod(o_packed_idx_base + lane_idx / 16 + mma_q * 16 + j * 4, q, r);
+      const uint32_t packed = o_packed_idx_base + lane_idx / 16 + mma_q * 16 + j * 4;
+      q = packed >> 3;
+      r = packed & 7;
       const uint32_t o_idx = q;
       DTypeO* o_ptr = o_ptr_base + q * o_stride_n + r * o_stride_h +
                       (lane_idx % 16) * upcast_size_64b<DTypeO>();
@@ -8930,28 +8931,21 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
   DTypeQ* q = params.q;
   IdType* request_indices = params.request_indices;
   IdType* qo_tile_indices = params.qo_tile_indices;
-  IdType* kv_tile_indices = params.kv_tile_indices;
   IdType* q_indptr = params.q_indptr;
   IdType* kv_indptr = params.kv_indptr;
   DTypeKV* k = params.k;
   DTypeKV* v = params.v;
   IdType* o_indptr = params.o_indptr;
   DTypeO* o = params.o;
-  float* lse = params.lse;
-  bool* block_valid_mask = params.block_valid_mask;
-  const bool partition_kv = params.partition_kv;
   const uint32_t q_stride_n = params.q_stride_n;
   const uint32_t q_stride_h = params.q_stride_h;
   const uint32_t k_stride_n = params.k_stride_n;
   const uint32_t k_stride_h = params.k_stride_h;
   const uint32_t v_stride_n = params.v_stride_n;
   const uint32_t v_stride_h = params.v_stride_h;
-  const int32_t maybe_window_left = params.window_left;
   const uint_fastdiv& group_size = params.group_size;
 
   static_assert(sizeof(DTypeQ) == 2);
-  const uint32_t kv_chunk_size = *(params.kv_chunk_size_ptr);
-
   const uint32_t lane_idx = threadIdx.x, warp_idx = get_warp_idx<KTraits>();
   uint32_t bx, num_kv_heads, kv_head_idx;
   if constexpr (NUM_MMA_D_QK > NUM_MMA_D_VO) {
@@ -8964,25 +8958,16 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
     kv_head_idx = blockIdx.z;
   }
 
-  if (block_valid_mask && !block_valid_mask[bx]) {
-    return;
-  }
-
-  const uint32_t num_qo_heads = group_size * num_kv_heads;
-  const uint32_t request_idx = request_indices[bx], qo_tile_idx = qo_tile_indices[bx],
-                 kv_tile_idx = kv_tile_indices[bx];
+  const uint32_t num_qo_heads = num_kv_heads << 3;
+  const uint32_t request_idx = request_indices[bx], qo_tile_idx = qo_tile_indices[bx];
   extern __shared__ uint8_t smem[];
   auto& smem_storage = reinterpret_cast<typename KTraits::SharedStorage&>(smem);
   AttentionVariant variant(params, /*batch_idx=*/request_idx, smem);
-  const uint32_t qo_len = variant.qo_len, kv_len = variant.kv_len,
-                 window_left = variant.window_left;
-  const uint32_t kv_len_safe = kv_len > 0 ? kv_len : 1;
-  const uint32_t max_chunk_size = partition_kv ? kv_chunk_size : kv_len;
-  const uint32_t chunk_start = partition_kv ? kv_tile_idx * max_chunk_size : 0;
-  const uint32_t chunk_end =
-      partition_kv ? min((kv_tile_idx + 1) * max_chunk_size, kv_len) : kv_len;
+  const uint32_t qo_len = variant.qo_len, kv_len = variant.kv_len;
+  constexpr uint32_t chunk_start = 0;
+  const uint32_t chunk_end = kv_len;
   const uint32_t chunk_size = chunk_end - chunk_start;
-  const uint32_t qo_upper_bound = min(qo_len, ceil_div((qo_tile_idx + 1) * CTA_TILE_Q, group_size));
+  const uint32_t qo_upper_bound = min(qo_len, ((qo_tile_idx + 1) * CTA_TILE_Q) >> 3);
 
   uint32_t q_frag[NUM_MMA_Q][NUM_MMA_D_QK / 2][4];
   DTypeQKAccum s_frag[NUM_MMA_Q][NUM_MMA_KV][4];
@@ -9006,12 +8991,10 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
   const uint32_t o_stride_n = num_qo_heads * HEAD_DIM_VO, o_stride_h = HEAD_DIM_VO;
 
   DTypeQ* q_ptr_base =
-      q + q_indptr[request_idx] * q_stride_n + kv_head_idx * group_size * q_stride_h;
+      q + q_indptr[request_idx] * q_stride_n + (kv_head_idx << 3) * q_stride_h;
 
-  DTypeO* o_ptr_base = partition_kv ? o + (o_indptr[request_idx] + kv_tile_idx) * o_stride_n +
-                                          (kv_head_idx * group_size) * o_stride_h
-                                    : o + o_indptr[request_idx] * o_stride_n +
-                                          (kv_head_idx * group_size) * o_stride_h;
+  DTypeO* o_ptr_base = o + o_indptr[request_idx] * o_stride_n +
+                       (kv_head_idx << 3) * o_stride_h;
 
   uint32_t q_smem_offset_r = qo_smem.template get_permuted_offset<UPCAST_STRIDE_Q>(
       get_warp_idx_q<KTraits>() * NUM_MMA_Q * 16 + lane_idx % 16, lane_idx / 16);
@@ -9023,19 +9006,14 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
       (MASK_MODE == MaskMode::kCausal
            ? min(chunk_size,
                  sub_if_greater_or_zero(
-                     kv_len - qo_len + ((qo_tile_idx + 1) * CTA_TILE_Q) / group_size, chunk_start))
+                     kv_len - qo_len + (((qo_tile_idx + 1) * CTA_TILE_Q) >> 3), chunk_start))
            : chunk_size),
       CTA_TILE_KV);
-
-  const uint32_t window_iteration =
-      ceil_div(sub_if_greater_or_zero(kv_len + (qo_tile_idx + 1) * CTA_TILE_Q / group_size,
-                                      qo_len + window_left + chunk_start),
-               CTA_TILE_KV);
 
   const uint32_t mask_iteration =
       (MASK_MODE == MaskMode::kCausal
            ? min(chunk_size,
-                 sub_if_greater_or_zero(kv_len + (qo_tile_idx * CTA_TILE_Q) / group_size - qo_len,
+                 sub_if_greater_or_zero(kv_len + ((qo_tile_idx * CTA_TILE_Q) >> 3) - qo_len,
                                         chunk_start))
            : chunk_size) /
       CTA_TILE_KV;
@@ -9247,13 +9225,9 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
       // compute attention score
       compute_qk<KTraits>(q_frag, &k_smem, &k_smem_offset_r, s_frag);
       produce_k_r<KTraits>(&k_ptr, k_stride_n, (iter + 1) * CTA_TILE_KV, chunk_size, k_frag);
-      logits_transform<KTraits>(
-          params, variant, /*batch_idx=*/request_idx, qo_packed_idx_base,
-          chunk_start + (iter * NUM_WARPS_KV + get_warp_idx_kv<KTraits>()) * NUM_MMA_KV * 16,
-          qo_len, kv_len, group_size, s_frag, kv_head_idx);
 
       // apply mask
-      if (MASK_MODE == MaskMode::kCustom || (iter >= mask_iteration || iter < window_iteration)) {
+      if (iter >= mask_iteration) {
         logits_mask<KTraits>(
             params, variant, /*batch_idx=*/request_idx, qo_packed_idx_base,
             chunk_start + (iter * NUM_WARPS_KV + get_warp_idx_kv<KTraits>()) * NUM_MMA_KV * 16,
@@ -9278,37 +9252,11 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
   // normalize d
   normalize_d<KTraits>(o_frag, m, d);
 
-  const uint32_t num_kv_chunks = (kv_len_safe + kv_chunk_size - 1) / kv_chunk_size;
-
   // write back
   write_o_reg_gmem_(o_frag, &qo_smem, o_ptr_base, qo_packed_idx_base, qo_len,
-                    /*o_stride_n=*/
-                    partition_kv ? num_kv_chunks * o_stride_n : o_stride_n,
+                    /*o_stride_n=*/o_stride_n,
                     /*o_stride_h=*/o_stride_h, group_size);
 
-  // write lse
-  if constexpr (AttentionVariant::use_softmax) {
-    if (lse != nullptr) {
-      if (get_warp_idx_kv<KTraits>() == 0) {
-#pragma unroll
-        for (uint32_t mma_q = 0; mma_q < NUM_MMA_Q; ++mma_q) {
-          uint32_t q, r;
-          group_size.divmod(qo_packed_idx_base + lane_idx % 16 + mma_q * 16, q, r);
-          const uint32_t qo_head_idx = kv_head_idx * group_size + r;
-          const uint32_t qo_idx = q;
-          if (qo_idx < qo_len) {
-            if (partition_kv) {
-              lse[(o_indptr[request_idx] + qo_idx * num_kv_chunks + kv_tile_idx) * num_qo_heads +
-                  qo_head_idx] = math::ptx_log2(d[mma_q]) + float(m[mma_q]);
-            } else {
-              lse[(o_indptr[request_idx] + qo_idx) * num_qo_heads + qo_head_idx] =
-                  math::ptx_log2(d[mma_q]) + float(m[mma_q]);
-            }
-          }
-        }
-      }
-    }
-  }
 }
 
 template <typename KTraits, typename Params>

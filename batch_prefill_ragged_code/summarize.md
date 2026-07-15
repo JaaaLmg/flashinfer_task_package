@@ -397,3 +397,139 @@ python batch_prefill_ragged_code/benchmark_stage_a.py \
 最终 `.so` 已重新用 `nm -D` 确认导出 `run_kernel`，源码仍只依赖标准 CUDA/MXMACA include。plan cache
 的首次 D2H/分配发生在平台预热阶段；若用于没有预热、输入指针持续变化或多线程并发首次调用的生产环境，建议
 由集成层显式提供 plan/workspace，并增加线程安全的一次性初始化。
+
+---
+
+## 10. 第三轮优化（阶段 T～AJ，线上起点 63.13，2026-07-15）
+
+### 10.1 新的瓶颈判断
+
+阶段 H 提交后线上得分由 `59.20` 提升到 `63.13`，证明 Q64/Q128 动态分派、32-row KV tile 和精确
+plan cache 的方向有效，但距离榜首 70 分以上仍有差距。本轮首先重新核对主 kernel 的资源与源码中实际实例：
+
+- Q64：`126 MT registers`，4 warp/PEU；
+- Q128：`186 MT registers`，2 warp/PEU；
+- 最终接口固定为 `Hq=32, Hkv=4, D=128, causal=true`，因此 GQA group 固定为 8；
+- `run_kernel` 始终以 `tmp_v=nullptr, lse=nullptr, block_valid_mask=nullptr` 启动非 partition kernel；
+- attention variant 固定为 `DefaultAttention<false, false, false, false>`，即无 custom mask、sliding
+  window、logits soft cap 和 ALiBi。
+
+因此第三轮不再继续盲目压 KV tile，而是处理通用 FlashInfer kernel 为本题不可能出现的功能保留的标量地址、
+分支和回写状态。Q128 的主峰值仍由两个 Q fragment、FP32 softmax 和输出 accumulator 决定，无法仅靠后端
+寄存器上限安全消除。
+
+### 10.2 阶段 T：固定 GQA group=8
+
+将热路径中的 `uint_fastdiv.divmod(x, group_size)` 和 `kv_head * group_size` 专化为 `x >> 3`、
+`x & 7` 和左移，包括 Q global→shared、causal 边界索引、输出回写及 CTA 起止位置计算。
+
+15/15 用例全部正确。同进程交替 A/B 的代表结果为：用例 1 `-1.06%`、用例 12 `-1.11%`、用例 13
+`-3.58%`；多数 batch/q<kv 点提升约 `0.3%～0.6%`。用例 3 有约 `0.9%` 的小幅回退，但总延迟和
+算术平均测试点收益为正，因此保留。全量记录为 `stage_t_g8_only_results.csv`。
+
+### 10.3 固定 attention variant 裁剪
+
+源码中的 `LogitsTransform` 对最终 variant 是严格恒等函数，`LogitsMask` 是恒真函数，且 sliding-window
+模板参数为 false。通用 kernel 却仍构造 q/kv/head 索引，并读取未由该 variant 初始化的 `window_left`。
+最终版本做了以下编译期语义收敛：
+
+1. 删除 equal-dim 主循环中的恒等 `logits_transform` 调用；
+2. 删除禁用的 sliding-window iteration，只在 `iter >= mask_iteration` 时执行 causal 边界 mask；
+3. causal mask 只保留原有的 `kv_idx + qo_len > kv_len + q_idx` 和 chunk-end 判断；
+4. 保持原 `num_iterations` 循环、online softmax、BF16 MMA 和所有 causal 可见元素不变。
+
+这一组单独 A/B 接近中性，说明编译器原本已消除大部分恒等调用，但它去掉了未初始化成员参与控制流的隐患，
+也为后续删除 partition/LSE 状态提供了更短的活跃范围。`stage_x_no_identity_transform_results.csv`、
+`stage_y_no_window_results.csv` 和 `stage_aa_causal_mask_results.csv` 均为 15/15 正确。
+
+### 10.4 阶段 AC/AF：删除不可达的 partition、LSE 和 valid-mask 路径
+
+本题 ABI 没有 split-K workspace，host dispatch 始终传入 `tmp_v=nullptr`，因此最终实例不可能 partition。
+本轮从实际 device kernel 中删除：
+
+- `kv_tile_indices`、`kv_chunk_size`、partition chunk 起止和输出 stride 分支；
+- 最终不请求的 LSE/log2 回写；
+- 恒空的 `block_valid_mask` 检查。
+
+这不是近似计算，也不是输出缓存：每次调用仍完整读取当前 Q/K/V，计算全部 causal attention；只裁掉入口约束下
+不可达的功能。资源变化为：
+
+| kernel | 阶段 H MT/ST | 第三轮最终 MT/ST | staticMaxWarps/PEU |
+|---|---:|---:|---:|
+| Q64/KV32 | 126 / 56 | 120 / 48 | 4 |
+| Q128/KV32 | 186 / 56 | 180 / 48 | 2 |
+
+同进程交替 A/B 中，删除 partition/LSE 相对前一正确版本在 15 点全部提升约 `0.4%～3.3%`；再删除
+valid-mask 后，中长点继续提升约 `0.6%～1.15%`，只有极短点处于事件量化噪声范围。对应全量中间记录为
+`stage_ac_no_partition_results.csv`。
+
+### 10.5 本轮关键负向实验
+
+| 实验 | 观察 | 决策 |
+|---|---|---|
+| 删除热循环连续 barrier | 稳定回退约 0.2%～0.5% | 恢复 barrier |
+| igroup strategy 0/1、fast-math、liverange/pingpong 后端开关 | 无收益或回退 0.7%～3.7% | 保留默认编译策略 |
+| `-max-mtreg-number=160/144` | Q128 出现 124-byte 以上 stack spill，回退 53%～68% | 不人工限制寄存器 |
+| Q128、8 warp、KV32 | 寄存器降到 128 且占用率提高，但实际慢 4%～7% | 不采用 |
+| Q128、4 warp、KV64 | 修复第二 Q fragment 的 shared 地址和 QK 循环后 15/15 正确；L=16384 约 `22.72 ms` | 慢于 KV32；此前约 17 ms 是漏算一半 Q fragment 的错误结果 |
+| Q96、3 warp、KV48 | xcore1000 报 shared/swizzle memory violation | 非标准 warp 布局不受支持 |
+| causal full/boundary 拆成两个循环 | Q64/Q128 寄存器升至 176/228，回退约 5% | 保留单循环 uniform 分支 |
+| 固定全部 stride/head/softmax scale | 寄存器最低到 116/176，但多数中长点反而慢 0.5%～1% | 说明调度质量比寄存器数字更重要，已撤销 |
+| 每次省略 `cudaFuncSetAttribute` | 能运行，但 A/B 无收益且极短点略慢 | 恢复原调用 |
+
+KV64 实验同时澄清了一个容易误判的结果：专用 ctk64 路径原本只加载/计算 `q_frag[0]`。在 Q128 改为
+4 warp × 2 Q fragments 后，第二 fragment 覆盖第一 fragment 的 shared 地址且没有进入 QK 循环，因而得到
+看似很快的 17 ms，但输出错误。补齐所有工作后正确性能不及当前 KV32，不能用错误吞吐作为优化依据。
+
+### 10.6 第三轮最终结果
+
+最终默认种子记录为 `stage_aj_final_results.csv`，替代种子 `20260719` 记录为
+`stage_aj_alt_seed_results.csv`。两者均 15/15 通过、`match_ratio=1.0`、`severe_error_count=0`；默认种子
+最大绝对误差 `0.0078125`，替代种子最大绝对误差同为 `0.0078125`。
+
+| ID | 阶段 H ms | 第三轮最终 ms | 本地下降 |
+|---:|---:|---:|---:|
+| 1 | 0.928 | 0.888 | 4.31% |
+| 2 | 0.178 | 0.164 | 7.87% |
+| 3 | 1.620 | 1.611 | 0.55% |
+| 4 | 21.323 | 20.871 | 2.12% |
+| 5 | 0.479 | 0.468 | 2.26% |
+| 6 | 5.595 | 5.481 | 2.04% |
+| 7 | 1.664 | 1.648 | 0.93% |
+| 8 | 5.859 | 5.711 | 2.54% |
+| 9 | 0.362 | 0.345 | 4.63% |
+| 10 | 0.295 | 0.286 | 3.00% |
+| 11 | 0.348 | 0.337 | 3.15% |
+| 12 | 0.696 | 0.668 | 3.97% |
+| 13 | 0.050 | 0.040 | 20.00%* |
+| 14 | 0.022 | 0.011 | 49.88%* |
+| 15 | 0.030 | 0.020 | 31.01%* |
+
+`*` 极短点的跨轮百分比受事件量化和重复数影响，应以同进程 A/B 的小幅收益为准，不把该百分比外推为硬件
+吞吐提升。15 点总时由阶段 H 的 `39.448 ms` 降至 `38.550 ms`，下降 `2.28%`；替代种子总时为
+`38.649 ms`。L=16384 的有效吞吐由约 `103.1 TFLOPS` 提升到约 `105.3 TFLOPS`。
+
+第三轮最终 `.so` 已由当前源码重新生成，`nm -D` 确认导出未改名的 `run_kernel`。线上最终得分仍必须以
+重新提交后的平台报告为准，不能由本地 2.28% 总时下降直接线性换算；评分公式对不同测试点的 `Tb/Th` 不同。
+
+### 10.7 最终复现命令
+
+```bash
+python batch_prefill_ragged_code/benchmark_stage_a.py \
+  --source batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  --library batch_prefill_ragged_code/ragged_prefill_optimized.so \
+  --cases all \
+  --output batch_prefill_ragged_code/stage_aj_final_results.csv \
+  --max-repeats 10
+
+python batch_prefill_ragged_code/benchmark_stage_a.py \
+  --source batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  --library batch_prefill_ragged_code/ragged_prefill_optimized.so \
+  --cases all \
+  --output batch_prefill_ragged_code/stage_aj_alt_seed_results.csv \
+  --seed 20260719 --max-repeats 3
+```
+
+本轮停止依据：合法 Q/KV tile 和 warp 组合已再次覆盖；新的 Q96 布局硬件越界，正确 KV64 比 KV32 慢，
+强制降寄存器产生严重 spill，静态参数化虽降低资源数字却降低真实吞吐。最终保留的每项改动均通过全量、换种子
+和同进程交替 A/B，继续在当前内联 kernel 上做局部标量裁剪已经进入低于测量噪声或稳定回退区间。
