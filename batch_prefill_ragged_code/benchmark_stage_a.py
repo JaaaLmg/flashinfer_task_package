@@ -24,9 +24,10 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "code" / "ragged_prefill_baseline.cu"
-LIBRARY = ROOT / "code" / "ragged_prefill_baseline.so"
-DEFAULT_RESULT = ROOT / "code" / "stage_a_benchmark_results.csv"
+CODE_DIR = ROOT / "batch_prefill_ragged_code"
+DEFAULT_SOURCE = CODE_DIR / "ragged_prefill_baseline.cu"
+DEFAULT_LIBRARY = CODE_DIR / "ragged_prefill_baseline.so"
+DEFAULT_RESULT = CODE_DIR / "stage_a_benchmark_results.csv"
 
 H_Q = 32
 H_KV = 4
@@ -97,8 +98,8 @@ def make_indptr(lengths: Iterable[int], device: torch.device) -> torch.Tensor:
     return torch.tensor(values, dtype=torch.int32, device=device)
 
 
-def compile_library(force: bool = False) -> None:
-    if LIBRARY.exists() and not force and LIBRARY.stat().st_mtime >= SOURCE.stat().st_mtime:
+def compile_library(source: Path, library: Path, force: bool = False) -> None:
+    if library.exists() and not force and library.stat().st_mtime >= source.stat().st_mtime:
         return
     cmd = [
         "mxcc",
@@ -108,16 +109,16 @@ def compile_library(force: bool = False) -> None:
         "-I/opt/maca/tools/cu-bridge/include",
         "-shared",
         "-fPIC",
-        str(SOURCE),
+        str(source),
         "-o",
-        str(LIBRARY),
+        str(library),
     ]
     print("[build]", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
 
 
-def load_kernel() -> ctypes._CFuncPtr:
-    library = ctypes.CDLL(str(LIBRARY))
+def load_kernel(library_path: Path) -> ctypes._CFuncPtr:
+    library = ctypes.CDLL(str(library_path))
     run = library.run_kernel
     run.argtypes = [ctypes.c_void_p] * 6 + [ctypes.c_int64] * 7
     run.restype = None
@@ -290,6 +291,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", default="all", help="all or comma-separated case IDs")
     parser.add_argument("--output", type=Path, default=DEFAULT_RESULT)
+    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument("--library", type=Path, default=DEFAULT_LIBRARY)
     parser.add_argument("--max-repeats", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260715)
     parser.add_argument("--force-build", action="store_true")
@@ -303,8 +306,10 @@ def main() -> int:
     if not selected:
         raise ValueError("No cases selected")
 
-    compile_library(force=args.force_build)
-    run = load_kernel()
+    source = args.source.resolve()
+    library = args.library.resolve()
+    compile_library(source, library, force=args.force_build)
+    run = load_kernel(library)
     workspace = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device="cuda")
 
     print(
@@ -375,8 +380,8 @@ def main() -> int:
                 f"torch={torch.__version__}",
                 f"flashinfer={getattr(flashinfer, '__version__', 'unknown')}",
                 f"device={torch.cuda.get_device_name(0)}",
-                f"source={SOURCE}",
-                f"library={LIBRARY}",
+                f"source={source}",
+                f"library={library}",
                 f"results={args.output}",
                 f"passed={passed_count}/{len(rows)}",
                 "ragged_lengths=deterministic lengths matching published totals/maxima; exact hidden OJ indptr is unavailable",

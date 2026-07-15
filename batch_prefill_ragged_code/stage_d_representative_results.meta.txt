@@ -1,0 +1,11 @@
+timestamp=2026-07-15T18:32:56.514317
+host=9354b2a224ab
+python=3.12.11
+torch=2.8.0+metax3.5.3.9
+flashinfer=0.2.6+metax3.5.3.9torch2.8
+device=MetaX C500
+source=/data/flashinfer_task_package/batch_prefill_ragged_code/ragged_prefill_stage_d.cu
+library=/data/flashinfer_task_package/batch_prefill_ragged_code/ragged_prefill_stage_d.so
+results=batch_prefill_ragged_code/stage_d_representative_results.csv
+passed=6/6
+ragged_lengths=deterministic lengths matching published totals/maxima; exact hidden OJ indptr is unavailable
