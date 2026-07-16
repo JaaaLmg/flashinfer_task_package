@@ -1,0 +1,3 @@
+case_id,name,batch_size,seq_len,head_dim,logical_pages,candidate_ms,flashinfer_ms,slowdown_vs_flashinfer,effective_tflops,candidate_repeats,flashinfer_repeats,match_ratio,max_abs_error,severe_error_count,passed
+2,b1_l1024_d128,1,1024,128,64,0.2555733323097229,0.35948801040649414,0.7109370129499762,67.22089910061567,3,20,1.0,0.001953125,0,True
+8,b1_l1024_d256,1,1024,256,64,0.7013546625773112,0.7961088180541992,0.8809783872153554,48.99053246717738,3,20,1.0,0.000244140625,0,True

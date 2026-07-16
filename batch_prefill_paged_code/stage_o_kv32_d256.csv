@@ -1,0 +1,2 @@
+case_id,name,batch_size,seq_len,head_dim,passed,error
+8,b1_l1024_d256,1,1024,256,False,"AcceleratorError('CUDA error: an illegal memory access was encountered\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n')"

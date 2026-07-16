@@ -1,0 +1,166 @@
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #1
+    Config:  batch=1, seq_len=1024, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           0.434000     ms
+  User kernel:        0.276000     ms
+  Speedup vs base:    1.572       x
+
+  Score ratio:        0.639371      (63.94%)
+  Display score:      63            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #2
+    Config:  batch=1, seq_len=4096, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           2.770000     ms
+  User kernel:        3.761000     ms
+  Speedup vs base:    0.737       x
+
+  Score ratio:        0.383146      (38.31%)
+  Display score:      38            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+----------------------------------------------------------------
+  Testcase  #3
+    Config:  batch=1, seq_len=8192, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           10.367000    ms
+  User kernel:        14.867000    ms
+  Speedup vs base:    0.697       x
+
+  Score ratio:        0.360000      (36.00%)
+  Display score:      36            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #4
+    Config:  batch=1, seq_len=16384, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           39.393000    ms
+  User kernel:        58.205000    ms
+  Speedup vs base:    0.677       x
+
+  Score ratio:        0.345671      (34.57%)
+  Display score:      34            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #5
+    Config:  batch=4, seq_len=1024, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           0.913000     ms
+  User kernel:        1.003000     ms
+  Speedup vs base:    0.910       x
+
+  Score ratio:        0.466501      (46.65%)
+  Display score:      46            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #6
+    Config:  batch=4, seq_len=4096, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           10.404000    ms
+  User kernel:        14.690000    ms
+  Speedup vs base:    0.708       x
+
+  Score ratio:        0.365486      (36.55%)
+  Display score:      36            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #7
+    Config:  batch=4, seq_len=8192, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           39.358000    ms
+  User kernel:        58.405000    ms
+  Speedup vs base:    0.674       x
+
+  Score ratio:        0.344165      (34.42%)
+  Display score:      34            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #8
+    Config:  batch=4, seq_len=16384, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           153.794000   ms
+  User kernel:        232.044000   ms
+  Speedup vs base:    0.663       x
+
+  Score ratio:        0.336459      (33.65%)
+  Display score:      33            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #9
+    Config:  batch=16, seq_len=1024, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           2.900000     ms
+  User kernel:        3.872000     ms
+  Speedup vs base:    0.749       x
+
+  Score ratio:        0.391551      (39.16%)
+  Display score:      39            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #10
+    Config:  batch=16, seq_len=4096, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           40.049000    ms
+  User kernel:        58.626000    ms
+  Speedup vs base:    0.683       x
+
+  Score ratio:        0.350245      (35.02%)
+  Display score:      35            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #11
+    Config:  batch=16, seq_len=8192, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           154.654000   ms
+  User kernel:        232.945000   ms
+  Speedup vs base:    0.664       x
+
+  Score ratio:        0.337569      (33.76%)
+  Display score:      33            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - Paged KV Cache Attention ===
+----------------------------------------------------------------
+  Testcase  #12
+    Config:  batch=16, seq_len=16384, q_heads=32, kv_heads=4, head_dim=128, page_size=16, causal=0
+
+  Baseline:           610.887000   ms
+  User kernel:        925.170000   ms
+  Speedup vs base:    0.660       x
+
+  Score ratio:        0.334527      (33.45%)
+  Display score:      33            / 100
+  Pass:               OK
+----------------------------------------------------------------

@@ -1,0 +1,14 @@
+batch_size,seq_len,old_online_ms,projected_online_ms,projected_score,method
+1,1024,0.276,0.256,66.22,local_speedup_ratio_applied_to_old_online_time
+1,4096,3.761,2.425,55.94,local_speedup_ratio_applied_to_old_online_time
+1,8192,14.867,9.358,54.77,local_speedup_ratio_applied_to_old_online_time
+1,16384,58.205,36.780,53.31,local_speedup_ratio_applied_to_old_online_time
+4,1024,1.003,0.772,56.36,local_speedup_ratio_applied_to_old_online_time
+4,4096,14.690,9.549,53.96,local_speedup_ratio_applied_to_old_online_time
+4,8192,58.405,37.294,52.58,local_speedup_ratio_applied_to_old_online_time
+4,16384,232.044,144.693,53.00,local_speedup_ratio_applied_to_old_online_time
+16,1024,3.872,2.891,50.12,local_speedup_ratio_applied_to_old_online_time
+16,4096,58.626,37.472,53.15,local_speedup_ratio_applied_to_old_online_time
+16,8192,232.945,146.572,52.61,local_speedup_ratio_applied_to_old_online_time
+16,16384,925.170,576.819,52.83,local_speedup_ratio_applied_to_old_online_time
+average,,,54.57,54.57,projection_not_an_online_score

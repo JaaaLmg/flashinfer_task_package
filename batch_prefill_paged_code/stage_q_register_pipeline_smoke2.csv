@@ -1,0 +1,4 @@
+case_id,name,batch_size,seq_len,head_dim,logical_pages,candidate_ms,flashinfer_ms,slowdown_vs_flashinfer,effective_tflops,candidate_repeats,flashinfer_repeats,match_ratio,max_abs_error,severe_error_count,passed
+2,b1_l1024_d128,1,1024,128,64,0.25702399015426636,0.3598464012145996,0.7142602768479165,66.84150056844345,3,20,1.0,0.001953125,0,True
+4,b1_l4096_d128,1,4096,128,256,3.060906728108724,4.596377563476563,0.6659389238236438,89.80277132254919,3,20,1.0,0.0009765625,0,True
+8,b1_l1024_d256,1,1024,256,,,,,,,,,,,False
