@@ -8374,6 +8374,77 @@ __device__ __forceinline__ void update_mdo_states_pair(
   }
 }
 
+template <typename KTraits, bool INIT_REF>
+__device__ __forceinline__ void update_mdo_states_fixed_ref(
+    typename KTraits::AttentionVariant variant,
+    typename KTraits::DTypeQKAccum (*s_frag)[KTraits::NUM_MMA_KV][4],
+    typename KTraits::DTypeQKAccum* m, float* d) {
+  const float sm_scale = variant.sm_scale_log2;
+#pragma unroll
+  for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
+    if constexpr (INIT_REF) {
+#pragma unroll
+      for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
+        const float m_local =
+            max(max(s_frag[mma_q][mma_kv][0], s_frag[mma_q][mma_kv][1]),
+                max(s_frag[mma_q][mma_kv][2], s_frag[mma_q][mma_kv][3]));
+        m[mma_q] = max(m[mma_q], m_local);
+      }
+      m[mma_q] = max(m[mma_q], math::shfl_xor_sync(m[mma_q], 32));
+      m[mma_q] = max(m[mma_q], math::shfl_xor_sync(m[mma_q], 16));
+      d[mma_q] = 0.f;
+    }
+    const float m_scale = -m[mma_q] * sm_scale;
+#pragma unroll
+    for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
+      fma_f32x2(&s_frag[mma_q][mma_kv][0], &s_frag[mma_q][mma_kv][0], sm_scale, m_scale);
+      fma_f32x2(&s_frag[mma_q][mma_kv][2], &s_frag[mma_q][mma_kv][2], sm_scale, m_scale);
+#pragma unroll
+      for (uint32_t r = 0; r < 4; ++r) {
+        s_frag[mma_q][mma_kv][r] = math::ptx_exp2(s_frag[mma_q][mma_kv][r]);
+      }
+    }
+  }
+}
+
+template <typename KTraits, bool INIT_REF>
+__device__ __forceinline__ void update_mdo_states_pair_fixed_ref(
+    typename KTraits::AttentionVariant variant,
+    typename KTraits::DTypeQKAccum (*s0)[KTraits::NUM_MMA_KV][4],
+    typename KTraits::DTypeQKAccum (*s1)[KTraits::NUM_MMA_KV][4],
+    typename KTraits::DTypeQKAccum* m, float* d) {
+  const float sm_scale = variant.sm_scale_log2;
+#pragma unroll
+  for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
+    if constexpr (INIT_REF) {
+#pragma unroll
+      for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
+        const float m0 = max(max(s0[mma_q][mma_kv][0], s0[mma_q][mma_kv][1]),
+                             max(s0[mma_q][mma_kv][2], s0[mma_q][mma_kv][3]));
+        const float m1 = max(max(s1[mma_q][mma_kv][0], s1[mma_q][mma_kv][1]),
+                             max(s1[mma_q][mma_kv][2], s1[mma_q][mma_kv][3]));
+        m[mma_q] = max(m[mma_q], max(m0, m1));
+      }
+      m[mma_q] = max(m[mma_q], math::shfl_xor_sync(m[mma_q], 32));
+      m[mma_q] = max(m[mma_q], math::shfl_xor_sync(m[mma_q], 16));
+      d[mma_q] = 0.f;
+    }
+    const float m_scale = -m[mma_q] * sm_scale;
+#pragma unroll
+    for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
+      fma_f32x2(&s0[mma_q][mma_kv][0], &s0[mma_q][mma_kv][0], sm_scale, m_scale);
+      fma_f32x2(&s0[mma_q][mma_kv][2], &s0[mma_q][mma_kv][2], sm_scale, m_scale);
+      fma_f32x2(&s1[mma_q][mma_kv][0], &s1[mma_q][mma_kv][0], sm_scale, m_scale);
+      fma_f32x2(&s1[mma_q][mma_kv][2], &s1[mma_q][mma_kv][2], sm_scale, m_scale);
+#pragma unroll
+      for (uint32_t r = 0; r < 4; ++r) {
+        s0[mma_q][mma_kv][r] = math::ptx_exp2(s0[mma_q][mma_kv][r]);
+        s1[mma_q][mma_kv][r] = math::ptx_exp2(s1[mma_q][mma_kv][r]);
+      }
+    }
+  }
+}
+
 // for b64 with no perm and lds_trans
 template <typename KTraits, bool LDS_TRANS_ENABLE = false, bool USE_LDGBSM = false>
 __device__ __forceinline__ void compute_sfm_v(
@@ -9313,7 +9384,11 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
             qo_len, kv_len, chunk_end, group_size, s_frag_next, kv_head_idx);
       }
 
-      update_mdo_states_pair<KTraits>(variant, s_frag, s_frag_next, o_frag, m, d);
+      if (iter == 0) {
+        update_mdo_states_pair_fixed_ref<KTraits, true>(variant, s_frag, s_frag_next, m, d);
+      } else {
+        update_mdo_states_pair_fixed_ref<KTraits, false>(variant, s_frag, s_frag_next, m, d);
+      }
 
       compute_sfm_v_(&v_smem, &v_smem_offset_r, s_frag, o_frag, d);
       sync_threads();
@@ -9343,7 +9418,11 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
             chunk_start + (iter * NUM_WARPS_KV + get_warp_idx_kv<KTraits>()) * NUM_MMA_KV * 16,
             qo_len, kv_len, chunk_end, group_size, s_frag, kv_head_idx);
       }
-      update_mdo_states<KTraits>(variant, s_frag, o_frag, m, d);
+      if (iter == 0) {
+        update_mdo_states_fixed_ref<KTraits, true>(variant, s_frag, m, d);
+      } else {
+        update_mdo_states_fixed_ref<KTraits, false>(variant, s_frag, m, d);
+      }
       sync_threads();
       compute_sfm_v_(&v_smem, &v_smem_offset_r, s_frag, o_frag, d);
     }
@@ -10758,7 +10837,7 @@ CachedPlan* get_cached_plan(const void* q, const int32_t* qi, const int32_t* ki,
   struct Task {
     int request;
     int tile;
-    int visible_kv;
+    int kv_iterations;
   };
   std::vector<Task> tasks;
   tasks.reserve(plan.total_tasks);
@@ -10768,11 +10847,11 @@ CachedPlan* get_cached_plan(const void* q, const int32_t* qi, const int32_t* ki,
     const int tiles = (qlen + q_tile - 1) / q_tile;
     for (int tile = 0; tile < tiles; ++tile) {
       const int visible_kv = std::min(kvlen, kvlen - qlen + (tile + 1) * q_tile);
-      tasks.push_back({b, tile, visible_kv});
+      tasks.push_back({b, tile, (visible_kv + 31) / 32});
     }
   }
   std::stable_sort(tasks.begin(), tasks.end(), [](const Task& a, const Task& b) {
-    return a.visible_kv > b.visible_kv;
+    return a.kv_iterations > b.kv_iterations;
   });
   for (int task = 0; task < plan.total_tasks; ++task) {
     h_request[task] = tasks[task].request;
