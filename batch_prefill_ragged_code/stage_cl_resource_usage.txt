@@ -1,0 +1,12 @@
+ maca info  : Function properties for  _ZN12_GLOBAL__N_112single_tokenEPK15__maca_bfloat16PS0_PKiS5_i 
+  0 bytes stack frame 
+ maca info  : Used  40 MTregisters, 22 STregisters, 0 bytes shared mem  
+ maca info  : staticMaxWarps/PEU : 8
+ maca info  : Function properties for  _ZN10flashinfer39BatchPrefillWithRaggedKVCacheFlatKernelINS_12KernelTraitsILNS_8MaskModeE1ELj64ELj1ELj2ELj8ELj8ELj4ELj1ELNS_15PosEncodingModeE0E15__maca_bfloat16S4_S4_fiNS_16DefaultAttentionILb0ELb0ELb0ELb0EEEEENS_24BatchPrefillRaggedParamsIS4_S4_S4_iEEEEvT0_ 
+  0 bytes stack frame 
+ maca info  : Used  162 MTregisters, 48 STregisters, 0 bytes shared mem  
+ maca info  : staticMaxWarps/PEU : 3
+ maca info  : Function properties for  _ZN10flashinfer35BatchPrefillWithRaggedKVCacheKernelINS_12KernelTraitsILNS_8MaskModeE1ELj128ELj2ELj2ELj8ELj8ELj4ELj1ELNS_15PosEncodingModeE0E15__maca_bfloat16S4_S4_fiNS_16DefaultAttentionILb0ELb0ELb0ELb0EEEEENS_24BatchPrefillRaggedParamsIS4_S4_S4_iEEEEvT0_ 
+  0 bytes stack frame 
+ maca info  : Used  232 MTregisters, 48 STregisters, 0 bytes shared mem  
+ maca info  : staticMaxWarps/PEU : 2

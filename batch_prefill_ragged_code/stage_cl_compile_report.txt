@@ -1,0 +1,15 @@
+stage=CL
+date=2026-07-17
+source=ragged_prefill_optimized.cu
+source_sha256=58cb5e134f126dcef9b76d6da2952be2863601cd40631be679ae66c26539b924
+attention_kernel_instances=2
+local_cold_compile_seconds=6.657
+local_previous_cf_compile_seconds_approx=8.4
+local_fourth_round_bl_compile_seconds_approx=6.7
+default_total_ms=33.104240
+alternate_seed_total_ms=33.105208
+default_legacy_projection=72.024696
+alternate_seed_legacy_projection=72.017302
+fourth_round_actual_online_score=65.33
+fifth_round_online_status=compile_time_limit_exceeded
+note=Legacy projections remain optimistic until a new per-checkpoint online report is available.

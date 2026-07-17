@@ -1,5 +1,10 @@
 # Ragged Prefill 优化迭代总结
 
+> **2026-07-17 最新状态：** 第四轮已在 64 GiB 完整 C500、MACA 3.7.1.5 上完成，最终版本为
+> 阶段 BL。15/15 用例和替代种子均通过，本地总时相对本轮起点下降 7.57%；按最近一次线上
+> checkpoint 逐点校准后的预测精确均分为 **67.59**。因此下文早期“已接近硬件上限”的结论仅是
+> 对旧 25% 环境和旧参考库的阶段性判断，**当前没有证据表明已达到 71.60**。最新结论以第 11 节为准。
+
 ## 1. 最终结论
 
 本次在阶段 A 精确 baseline 之上完成了 B、C、D、E 四个迭代阶段。最终实现为
@@ -533,3 +538,405 @@ python batch_prefill_ragged_code/benchmark_stage_a.py \
 本轮停止依据：合法 Q/KV tile 和 warp 组合已再次覆盖；新的 Q96 布局硬件越界，正确 KV64 比 KV32 慢，
 强制降寄存器产生严重 spill，静态参数化虽降低资源数字却降低真实吞吐。最终保留的每项改动均通过全量、换种子
 和同进程交替 A/B，继续在当前内联 kernel 上做局部标量裁剪已经进入低于测量噪声或稳定回退区间。
+
+---
+
+## 11. 第四轮优化（阶段 AK～BL，64 GiB 完整 C500，2026-07-17）
+
+### 11.1 环境重新定界
+
+本轮环境与前三轮不同，必须重新建立基线，不能直接比较旧 CSV 的绝对时间。
+
+| 项目 | 第三轮记录 | 第四轮环境 |
+|---|---|---|
+| GPU | MetaX C500，标记为 25% Compute slice，约 16 GiB | MetaX C500，64 GiB，`sGPU-M Disabled` |
+| 可见 SM | 104 | 104 |
+| MXMACA | 3.5.3.20 | 3.7.1.5 |
+| PyTorch | 2.8.0+metax3.5.3.9 | 2.8.0+metax3.7.1.3 |
+| FlashInfer | 0.2.6+metax3.5.3.9torch2.8 | 0.2.6+metax3.7.1.3torch2.8 |
+| 显存 | 约 16 GiB 配额 | 65120 MiB 可见 |
+
+`mx-smi` 显示完整 64 GiB 显存且 sGPU 未启用；PyTorch 仍报告 104 个 SM。由此可见，旧文档中“104 SM
+等价于 25% slice”的推断不可靠。第四轮以当前机器自身 A/B 比值为优化依据，再通过线上报告逐点映射，而不是
+假设一个统一的 GPU 缩放系数。
+
+阶段 AK 在新环境重跑第三轮最终源码，15/15 正确，总时 `38.871 ms`。代表点为：#1 `0.895 ms`、
+#4 `21.055 ms`、#6 `5.539 ms`、#8 `5.769 ms`、#11 `0.348 ms`。
+
+### 11.2 与线上一致的分数校准
+
+最近一次线上报告的整数显示分平均为用户记录的 `64.93`；报告中的未取整 `Score ratio` 平均为
+`65.43892`。两者口径不同，本轮预测统一使用未取整分数。
+
+对每个测试点，用线上 `T_b`、`T_k` 和分数反推理论下限 `T_h`：
+
+```text
+r = 100 / S - 1
+T_h = (T_k - r * T_b) / (1 - r)
+```
+
+然后用本地同一源码优化前后的逐点比值预测新的线上时间：
+
+```text
+T_online_new = T_online_old * (T_local_new / T_local_old)
+```
+
+最后代回官方公式。该方法能保留线上每点不同的 baseline、理论下限和本地/线上缩放差异。特别是 #13
+本地仅约 `0.040 ms`、线上却为 `0.241 ms`，证明统一乘一个 GPU 系数会严重失真。
+
+校准脚本：`project_online_score.py`；结果：`stage_bl_online_score_projection.csv`。
+
+### 11.3 迭代总览
+
+| 阶段 | 改动 | 结果 | 决策 |
+|---|---|---|---|
+| AK | MACA 3.7 / 64 GiB 新基线 | 15/15，总时 38.871 ms | 新锚点 |
+| AL | 固定 Q64/Q128 直接 launch，属性只配置一次 | 正确，低于 0.5% | 保留 host 收敛，GPU 近中性 |
+| AM/AN | Q256/W8/KV64，先修 lambda 返回栈数组 UB | 错误快至 14.44 ms；修 UB 后仍错误 | 不采用错误吞吐 |
+| AO/AP | 补齐双 Q fragment 的 Q load/QK，Q256/KV64 | 正确；#4 约快 2.5%，#3/#6 回退 | 不分派 |
+| AQ | 在 QK 后过早预取 V | 正确但总体中性或回退 | 撤销 |
+| AS/AT | MACA 3.7 下重新强制扫描 Q64/Q128 | 找到少量逐点分派修正 | 纳入最终分派 |
+| AU | Q192/W4/KV32 | 正确但长点回退 13%～23% | 淘汰 |
+| AV | `__launch_bounds__(..., 2)` 强制双 CTA | MACA 明确警告最小 block 数非法并忽略 | 撤销 |
+| AX/AY | 两个 KV32 tile 合并一次 max/softmax；先全量，再限定 Q128 | 正确；Q128 长点约快 2%～3% | 采用思路 |
+| BC | 扩展 KV32 loader 以尝试 Q256/W8 | 可编译但 shared/swizzle memory violation | 撤销 loader 扩展 |
+| BD | 下一对 K/V 预取与当前 softmax/PV 重叠，删除冗余 barrier | 正确；Q128 再快 4%～6% | 采用 |
+| BE | Q64 在 softmax 后、PV 前预取下一 V tile | 正确；Q64 约快 1%～3% | 采用 |
+| BF | K shared store 提前到 PV 前 | Q128 有益、Q64 部分回退 | 仅保留 Q128 顺序 |
+| BH | 用完整新流水重新启用 Q64 双 tile | 正确；Q64 再快约 2%～4% | 采用 |
+| BI | 显式 igroup strategy 1 | Q128 回退约 0.5%～0.8% | 撤销 |
+| BJ/BK | Q128/W8/KV64 | 普通点明显回退；#11 从 0.312 到 0.292 ms | 仅 #11 分派 |
+| BL | 最终全量、替代种子、资源和分数投影 | 15/15，预测 67.59 | 当前提交版本 |
+| BM | 利用 Q shared 空闲区构造双 K/V shared buffer | 7/7 正确，但 Q128 全面回退约 1%～2% | 撤销，恢复 BL |
+
+### 11.4 双 KV32 合并 softmax 流水
+
+旧等维主循环每处理 32 个 KV token 都执行一次：QK、max/exp、旧输出 accumulator 缩放、PV 和 K/V
+换页。阶段 AX 将连续两个 KV32 tile 的分数同时保留在寄存器中，合并计算 64-key 范围的 max，旧输出只
+缩放一次，再分别完成两次 PV。它与标准 online softmax 数学等价，没有截断 key、减少 head dimension 或
+缓存输出。
+
+阶段 BD/BF 进一步调整依赖顺序：
+
+1. 第二个 tile 完成 QK 后立即发起下一对 K 的 global→register 读取；
+2. 第二个 tile 写入 V shared 后立即发起下一对 V 的读取；
+3. K shared 写入与当前 PV 交错；
+4. 删除一处在 QK 已由前序 barrier 完全结束后的冗余同步。
+
+阶段 BH 证明新版流水也适用于 Q64。虽然 Q64/Q128 的 MT 寄存器分别升至 `164/232`，资源报告中的
+`staticMaxWarps/PEU` 仍为 `3/2`，没有再降低静态 warp 上限；实际延迟显著下降。
+
+### 11.5 精度近似与非法布局的边界
+
+本轮没有采用依赖随机输入分布的近似。为量化可能性，曾独立测试只减少 QK 的输入维度：即使仅从 128 维
+降到 120 维，L=1024/2048/4096 的元素匹配率也只有约 `62.2%/77.7%/87.2%`，远低于 99%，且出现严重
+误差，因此明确否决。
+
+其他低时延但非法/错误结果：
+
+- 未补双 Q fragment 的 Q256/KV64：#4 约 `14.44 ms`，但匹配率仅 `60.8%`；
+- 补齐后 Q256/KV64 完全正确，但约 `20.52 ms`，不如最终 Q128 流水；
+- Q256/W8/KV32 虽编译为 196 个 MT 寄存器，但运行时触发 xcore1000 shared/swizzle memory violation；
+- Q256/W16/KV64 和 Q256/W8/KV32 原始 loader 组合不满足静态整除约束；
+- Q192/W4/KV32 正确但资源复用收益不足以覆盖寄存器压力。
+- 双 K/V shared buffer 将每对 tile 的 barrier 数进一步降低，但增加的 shared 写流量使 #4 从约
+  `19.37 ms` 回退到 `19.71 ms`，说明当前瓶颈不是单纯的同步次数。
+
+### 11.6 最终本地结果
+
+默认种子 `stage_bl_64g_final_results.csv` 和替代种子 `stage_bl_64g_alt_seed_results.csv` 均为 15/15 通过，
+`match_ratio=1.0`、`severe_error_count=0`，最大绝对误差均为 `0.0078125`。默认种子总时从 AK 的
+`38.871 ms` 降到 `35.928 ms`，下降 `7.57%`；替代种子总时为 `35.915 ms`。
+
+| ID | AK ms | BL ms | 本地下降 | BL TFLOPS |
+|---:|---:|---:|---:|---:|
+| 1 | 0.895 | 0.841 | 6.01% | 80.99 |
+| 2 | 0.166 | 0.161 | 3.21% | 53.39 |
+| 3 | 1.609 | 1.485 | 7.75% | 92.59 |
+| 4 | 21.055 | 19.366 | 8.02% | 113.56 |
+| 5 | 0.468 | 0.450 | 3.85% | 76.45 |
+| 6 | 5.539 | 5.150 | 7.03% | 106.78 |
+| 7 | 1.677 | 1.550 | 7.54% | 88.75 |
+| 8 | 5.769 | 5.355 | 7.17% | 102.70 |
+| 9 | 0.343 | 0.329 | 4.12% | 78.33 |
+| 10 | 0.267 | 0.254 | 4.82% | 78.06 |
+| 11 | 0.348 | 0.292 | 16.12% | 73.66 |
+| 12 | 0.671 | 0.629 | 6.14% | 74.88 |
+| 13 | 0.040 | 0.040 | 0.70% | 13.74 |
+| 14 | 0.008 | 0.009 | 事件量化噪声 | 0.00 |
+| 15 | 0.017 | 0.017 | 0.92% | 2.64 |
+
+最终资源：single-token `40 MT / 22 ST`；Q64/KV32 `164 MT / 52 ST`；Q128/KV32
+`232 MT / 48 ST`；#11 Q128/W8/KV64 `232 MT / 82 ST`。`nm -D` 已确认导出 `run_kernel`。
+
+### 11.7 线上预测与停止状态
+
+逐点校准结果：线上未取整平均分由 `65.43892` 预测到 `67.58819`，线上总时由 `37.195 ms` 预测到
+`34.396 ms`。预测改善最大的点是 #11（`59.74 → 65.66`），长点 #3/#4/#6/#8 约提升到
+`59.97/58.99/59.96/61.10`。
+
+后续平台实测更新：第四轮版本实际线上得分为 **65.33**，明显低于 `67.59` 的本地逐点映射预测。
+这说明仅用当前 64 GiB 本地时间比外推线上分数仍然过于乐观，后续预测必须同时报告原模型值和基于
+`65.33` 的保守偏差修正，不能再把原预测作为停止依据。
+
+**结论：当前版本没有达到用户要求的 71.60 停止阈值。** 还需要线上平均时间相对本轮预测再下降约 10%
+量级，且重点必须是 #3/#4/#6/#7/#8 的 MMA 主干，而不是短点 launch 开销。本轮已经完成当前内联
+xcore1000 FA2 框架内的合法 tile 和流水局部搜索；下一轮若继续追求 71.60，应实现更深的多 stage
+K/V pipeline 或新的 MMA 主干，而不是继续微调已证伪的 Q/KV tile。
+
+### 11.8 最终复现
+
+```bash
+python batch_prefill_ragged_code/benchmark_stage_a.py \
+  --source batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  --library batch_prefill_ragged_code/ragged_prefill_optimized.so \
+  --cases all \
+  --output batch_prefill_ragged_code/stage_bl_64g_final_results.csv \
+  --max-repeats 50 --force-build
+
+python batch_prefill_ragged_code/benchmark_stage_a.py \
+  --source batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  --library batch_prefill_ragged_code/ragged_prefill_optimized.so \
+  --cases all \
+  --output batch_prefill_ragged_code/stage_bl_64g_alt_seed_results.csv \
+  --seed 20260720 --max-repeats 5
+
+python batch_prefill_ragged_code/project_online_score.py \
+  --spj batch_prefill_ragged_code/chechpoint_result \
+  --local-before batch_prefill_ragged_code/stage_ak_64g_baseline_results.csv \
+  --local-after batch_prefill_ragged_code/stage_bl_64g_final_results.csv \
+  --output batch_prefill_ragged_code/stage_bl_online_score_projection.csv
+```
+
+最终源码 SHA256：`3c1155cf6d49ba72ba16c5861c2d73937a6abf502653d0604e35563a6e9ff1e1`。
+
+---
+
+## 12. 第五轮优化（阶段 BN～CF，causal 调度与 flat-grid，2026-07-17）
+
+### 12.1 本轮目标与资料结论
+
+本轮从 BL 的逐点校准预测 `67.58819` 继续优化，停止条件为可信预测达到或超过 `71.60`。首先复核了
+沐曦开发者文档链接及本机 MXMACA 3.7.1 SDK：公开链接对应《曦云系列通用计算 GPU 快速上手指南》，
+主要描述编程环境、编程模型和 API，没有给出 PEU 寄存器阈值、shared bank 或指令吞吐等微架构参数。
+真正可直接用于本题的资料来自本机官方头文件：
+
+- `mla_utils_64b.cuh` 使用 `__builtin_mxc_schedbound_begin/end` 约束局部调度；
+- `mla_kernels_xcore1000.cuh` 使用 KV 索引预取和 `gvmcnt` 等待；
+- `permuted_smem.cuh` 暴露 direct global-to-BSM load；
+- `mxcc --help` 暴露 `-maca-infer-ldg`、scheduler 选择和 `-resource-usage`。
+
+这些机制必须在当前 kernel 上实测，不能从 MLA/GEMM 的用法直接推断 attention 一定受益。特别是源码中
+未启用的 Q direct-LDGBSM 分支实际地址布局不完整，不能作为可用实现。
+
+### 12.2 负向实验与边界补全
+
+| 阶段 | 改动 | 结果 | 决策 |
+|---|---|---|---|
+| BN | 编译器 `-maca-infer-ldg` | 7 个长点基本中性，并产生大量跨度/对齐风险警告 | 不依赖非默认编译参数 |
+| BO | K/V register-to-shared store 外加 `schedbound` | #6 小幅改善，但 #3/#7 同量级回退 | 撤销 |
+| BP | 启用已有 Q direct-LDGBSM 分支 | 除独立 KV64 路径外匹配率仅 8%～56% | 分支布局不完整，撤销 |
+| BQ | Q128/W4/KV64 | 15/15 正确，资源 `256 MT / 76 ST`，代表点回退 15%～40% | 淘汰 |
+| BR | Q64/W2/KV32 | 15/15 正确，资源升至 `256 MT`，适用点全部回退 | 淘汰 |
+| BZ/CD | single-token 512/128 threads | 都不优于 256 threads，约 8 us launch 固定开销主导 | 保留 256 |
+| CE | Q32/W2/KV32 短点 | #13 回退，#15 从约 0.01125 降至 0.01050 ms | 仅 `seq_len<=65` 使用 Q32 |
+
+BQ/BR 补齐了第四轮未明确记录的两个合法 tile 组合。结果再次说明：BL 的 Q64/W4/KV32 和
+Q128/W4/KV32 已是当前 MMA 主干中的局部最优，继续减少 warp 或扩大 KV tile 会把并行度/寄存器压力推向
+错误方向。
+
+### 12.3 Causal longest-first 调度
+
+此前计划表按 query tile 升序发射。causal attention 中越靠后的 query tile 可见 KV 前缀越长，因此升序
+会让最后一个 GPU wave 集中最重 CTA，产生明显尾部空转。阶段 BS 首先在每个 request 内将 tile 改为降序：
+
+- #3：约 `1.482 -> 1.345 ms`；
+- #4：约 `19.345 -> 18.664 ms`；
+- #6：约 `5.144 -> 5.021 ms`；
+- 7 个代表点全部正确且均有收益。
+
+阶段 BT 将所有 request 按 tile 高度全局交错，多 batch 等长点继续提升，但 #11 因不同 request 的
+`kv_len-q_len` 不同，从约 `0.277` 回退到 `0.380 ms`。阶段 BU/BV 最终改为按每个 CTA 的真实 causal
+可见上界排序：
+
+```text
+visible_kv = min(kv_len, kv_len - q_len + (tile + 1) * q_tile)
+```
+
+计划阶段对所有 `(request, tile)` 按 `visible_kv` 稳定降序排列。该排序同时覆盖等长、统一 q<kv 和混合
+ragged，不依赖测试点编号，也不改变任何数值计算。计划 cache key 同时加入 `ki` 指针，避免不同 KV indptr
+错误复用计划。
+
+### 12.4 小 batch 的 flat-grid 特化
+
+原 launch 使用 `grid(total_tasks, 1, 4)`，4 个 KV head 位于 z 维。阶段 BW 将 `(task, kv_head)` 展平到
+x 维，使同一 cost 层的 4 个 head 交错进入调度队列：
+
+- B=1：#3 再快约 10%，#4 再快约 2.4%；
+- B=4：#6 再快约 1%，#10 约快 5%；
+- B=2：#11 约快 4%；
+- B>=16：#7/#8 以及大 batch ragged 回退，说明此时二维 grid 的 request/KV 局部性更重要。
+
+因此最终只对 `batch<=15` 使用 flat grid。flat 映射利用题目固定 `num_kv_heads=4`，将运行时除法改为：
+
+```text
+task = blockIdx.x >> 2
+kv_head = blockIdx.x & 3
+```
+
+CA 的运行时 flat 分支把预测推到 `71.10`。CB 进一步建立编译期 `FlatKernel`，资源由 Q64
+`164 MT` 降至 `162 MT`、Q128 `232 MT` 降至 `230 MT`；它明显改善短点，却使 L>=4096 长点的后端
+排程略退。CC 最终按长度组合两个实例：
+
+- `batch<=15 && seq_len<=2048`：编译期 flat kernel；
+- `batch<=15 && seq_len>2048`：保留运行时映射版本，但使用 flat grid；
+- `batch>15`：原二维 grid。
+
+这个组合同时保留长点 CA 和短点 CB 的收益。CF 再对 `seq_len<=65` 使用 Q32，其余短点仍使用 Q64。
+
+### 12.5 最终结果
+
+最终默认种子 `stage_cf_final_results.csv` 和高重复替代种子
+`stage_cf_alt_seed50_results.csv` 均为 15/15 通过，`match_ratio=1.0`、`severe_error_count=0`；默认种子
+最大绝对误差 `0.0078125`，替代种子最大绝对误差同样不超过 `0.0078125`。
+
+| ID | AK ms | BL ms | CF ms | AK→CF | BL→CF |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.895 | 0.841 | 0.825 | 7.72% | 1.82% |
+| 2 | 0.166 | 0.161 | 0.114 | 31.53% | 29.26% |
+| 3 | 1.609 | 1.485 | 1.201 | 25.37% | 19.10% |
+| 4 | 21.055 | 19.366 | 18.107 | 14.00% | 6.50% |
+| 5 | 0.468 | 0.450 | 0.396 | 15.48% | 12.09% |
+| 6 | 5.539 | 5.150 | 4.727 | 14.67% | 8.22% |
+| 7 | 1.677 | 1.550 | 1.371 | 18.23% | 11.56% |
+| 8 | 5.769 | 5.355 | 4.961 | 14.00% | 7.36% |
+| 9 | 0.343 | 0.329 | 0.294 | 14.31% | 10.63% |
+| 10 | 0.267 | 0.254 | 0.232 | 13.04% | 8.64% |
+| 11 | 0.348 | 0.292 | 0.259 | 25.60% | 11.31% |
+| 12 | 0.671 | 0.629 | 0.601 | 10.44% | 4.58% |
+| 13 | 0.040 | 0.040 | 0.032 | 20.81% | 20.25% |
+| 14 | 0.008 | 0.009 | 0.009 | 事件量化噪声 | 3.39% |
+| 15 | 0.017 | 0.017 | 0.011 | 36.17% | 35.58% |
+
+默认种子总时 `33.13915 ms`，替代种子总时 `33.13897 ms`。相对 AK 的 `38.871 ms` 下降约
+`14.75%`，相对 BL 的 `35.928 ms` 继续下降约 `7.76%`。
+
+最终资源报告 `stage_cf_resource_usage.txt`：
+
+- single-token：`40 MT / 22 ST`，staticMaxWarps/PEU=8；
+- Q32 normal/flat：`162/160 MT`，staticMaxWarps/PEU=3；
+- Q64 normal/flat：`164/162 MT`，staticMaxWarps/PEU=3；
+- Q128/W8/KV64 normal/flat：`232/230 MT`，staticMaxWarps/PEU=2；
+- Q128/W4/KV32 normal/flat：`232/230 MT`，staticMaxWarps/PEU=2。
+
+### 12.6 线上校准与停止依据
+
+逐点校准脚本仍使用最近一次 64.93 分线上报告反推每点硬件下限，再应用 AK→CF 的本地逐点时间比：
+
+- 默认种子预测：`71.70839`，预测线上总时 `31.73599 ms`；
+- 高重复替代种子预测：`71.71449`，预测线上总时 `31.73497 ms`。
+
+上述数字当时被用作本地停止依据，但后续线上提交在编译阶段直接触发
+`TimeLimitExceeded encountered while compiling the code`，没有产生正确性或性能分数。原因是 CF 同时
+实例化 Q32/Q64/Q128 的 normal 与 flat 版本，共 8 个重型 attention kernel；本地冷编译也由 BL 的约
+6.7 秒上升到约 8.4 秒。因此 CF 不能视为可提交的有效结果，`71.71` 只保留为历史本地预测。
+
+### 12.7 最终复现
+
+```bash
+mxcc -O3 -std=c++17 --offload-arch=xcore1000 \
+  -I/opt/maca/tools/cu-bridge/include -shared -fPIC -resource-usage \
+  batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  -o batch_prefill_ragged_code/ragged_prefill_optimized.so
+
+python batch_prefill_ragged_code/benchmark_stage_a.py \
+  --source batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  --library batch_prefill_ragged_code/ragged_prefill_optimized.so \
+  --cases all --output batch_prefill_ragged_code/stage_cf_final_results.csv \
+  --max-repeats 50
+
+python batch_prefill_ragged_code/benchmark_stage_a.py \
+  --source batch_prefill_ragged_code/ragged_prefill_optimized.cu \
+  --library batch_prefill_ragged_code/ragged_prefill_optimized.so \
+  --cases all --output batch_prefill_ragged_code/stage_cf_alt_seed50_results.csv \
+  --seed 20260721 --max-repeats 50
+
+python batch_prefill_ragged_code/project_online_score.py \
+  --spj batch_prefill_ragged_code/chechpoint_result \
+  --local-before batch_prefill_ragged_code/stage_ak_64g_baseline_results.csv \
+  --local-after batch_prefill_ragged_code/stage_cf_final_results.csv \
+  --output batch_prefill_ragged_code/stage_cf_online_score_projection.csv
+```
+
+最终源码 SHA256：`2556db7f6857adabf35b6088be86e909cbce2096c13db23816261b4368dba36e`。
+
+---
+
+## 13. 第六轮优化（阶段 CG～CL，线上编译收敛，2026-07-17）
+
+### 13.1 线上反馈与新评分边界
+
+本轮输入包含两条真实平台反馈：
+
+1. 第四轮 BL 实际线上得分为 `65.33`；
+2. 第五轮 CF 在评测工作目录 `/xpuoj/work/1/working` 编译时触发 TimeLimitExceeded，没有运行 kernel。
+
+第四轮原预测为 `67.588`，比实际高约 `2.26` 分。由于没有新的逐点线上时间，只能暂时把该差值作为
+保守偏差参考：CL 的旧模型预测不能直接当作实际分数。更精确的本地/线上映射必须等待下一次能够完成编译的
+逐点报告。
+
+### 13.2 模板实例裁剪
+
+CF 的 `launch_fixed_ragged` 对每组 traits 同时引用 normal 和 flat global kernel，导致以下 8 个实例全部
+进入设备编译：Q32 normal/flat、Q64 normal/flat、Q128/W8/KV64 normal/flat、Q128/W4/KV32 normal/flat。
+
+阶段 CG 将 kernel 类型改为 `USE_FLAT_KERNEL` 编译期参数，每组 traits 只引用实际会 launch 的实例：
+
+- Q32、Q64、Q128/W8/KV64 只生成 flat；
+- Q128/W4/KV32 只生成 normal，B<=15 时仍可用一维 flat grid。
+
+设备实例由 8 个降为 4 个，本地冷编译约 `8.4 -> 7.25 s`。阶段 CH 删除收益很小的 Q32 专用实例后降到
+3 个，约 `6.96 s`。
+
+阶段 CI 发现 #11 使用现有 Q64 flat kernel 比 Q128/W8/KV64 更快：约 `0.259 -> 0.247 ms`。因此删除
+KV64 专用实例，最终只保留：
+
+- Q64/W4/KV32 flat；
+- Q128/W4/KV32 normal。
+
+本地冷编译降到约 `6.47～6.66 s`，已经低于第四轮可在线编译版本的本地约 6.7 秒，同时 #11 性能继续
+提升。最终动态库只报告两个 attention kernel，降低了线上再次编译超时的风险。
+
+### 13.3 Q64 causal mask 收敛
+
+Q64 query tile 覆盖 8 个 token，KV tile 覆盖 32 个 token，因此每个 CTA 只有最后一个 KV tile 需要
+causal mask。阶段 CJ 对 Q64/Q128 一起删除冗余判断时，Q128 资源从 `232/48` 升到 `234/52 MT/ST`，
+长点回退约 0.8%。阶段 CK/CL 将简化严格限定到 Q64：
+
+- pair 的第一个 KV tile 不再检查 mask；
+- 第二个 tile 直接用 `iter + 2 == num_iterations` 判断是否为最后一个；
+- 奇数尾 tile 直接执行 mask。
+
+Q128 恢复原控制流和 `232 MT / 48 ST` 资源；Q64 保持 `162 MT / 48 ST`，#9/#10/#11 再改善约
+2%～3%。
+
+### 13.4 CL 最终可编译候选
+
+`stage_cl_compile_safe_results.csv` 和 `stage_cl_alt_seed_results.csv` 均为 15/15 通过，默认种子和替代种子
+总时分别为 `33.10424 ms`、`33.10521 ms`，`match_ratio=1.0`，最大绝对误差不超过 `0.0078125`。
+
+旧逐点映射模型预测：
+
+- 默认种子：`72.02470`；
+- 替代种子：`72.01730`。
+
+若机械减去第四轮预测相对实测约 `2.26` 分的偏差，保守估计约为 `69.76`。这只是缺少新逐点报告时的
+风险边界，不是新的平台分数。当前版本的首要改进是恢复可编译性，并在删除 6 个设备实例后仍比 CF 更快。
+
+最终资源 `stage_cl_resource_usage.txt`：single-token `40/22 MT/ST`，Q64 flat `162/48`、
+Q128 normal `232/48`；staticMaxWarps/PEU 分别为 8、3、2。
+
+最终源码 SHA256：`58cb5e134f126dcef9b76d6da2952be2863601cd40631be679ae66c26539b924`。
+
+下一步应先提交 CL 获取新的逐点线上时间。若能完成编译，再用该报告替换 64.93/65.33 的聚合校准，决定
+后续重点是继续优化 #3/#4/#6/#8 的 Q128 主干，还是针对线上短点固定开销调整分派。
