@@ -1,0 +1,61 @@
+W0729 03:31:54.206000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:54.206000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[env] device=MetaX C500 torch=2.8.0+metax3.7.1.3 flashinfer=0.2.6+metax3.7.1.3torch2.8
+[case 01] b1_l1024_d128: B=1, L=1024, D=128, H_kv=4
+W0729 03:31:54.289000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:54.289000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+W0729 03:31:54.290000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:54.290000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  passed=True match=1.000000 max_err=0.000976562 candidate=2.311ms flashinfer=0.033ms bw=0.9GB/s
+[case 02] b4_l1024_d128: B=4, L=1024, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.00195312 candidate=2.430ms flashinfer=0.042ms bw=3.5GB/s
+[case 03] b16_l1024_d128: B=16, L=1024, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.00195312 candidate=2.642ms flashinfer=0.068ms bw=12.7GB/s
+[case 04] b64_l1024_d128: B=64, L=1024, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000976562 candidate=3.215ms flashinfer=0.163ms bw=41.8GB/s
+[case 05] b128_l1024_d128: B=128, L=1024, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.00195312 candidate=5.726ms flashinfer=0.256ms bw=46.9GB/s
+[case 06] b1_l4096_d128: B=1, L=4096, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000488281 candidate=9.522ms flashinfer=0.044ms bw=0.9GB/s
+[case 07] b4_l4096_d128: B=4, L=4096, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000488281 candidate=10.026ms flashinfer=0.061ms bw=3.3GB/s
+[case 08] b16_l4096_d128: B=16, L=4096, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000488281 candidate=10.605ms flashinfer=0.162ms bw=12.7GB/s
+[case 09] b1_l16384_d128: B=1, L=16384, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000244141 candidate=39.719ms flashinfer=0.064ms bw=0.8GB/s
+[case 10] b4_l16384_d128: B=4, L=16384, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000244141 candidate=40.214ms flashinfer=0.148ms bw=3.3GB/s
+[case 11] b16_l16384_d128: B=16, L=16384, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000244141 candidate=42.292ms flashinfer=0.536ms bw=12.7GB/s
+[case 12] b1_l512_d64: B=1, L=512, D=64, H_kv=8
+W0729 03:31:55.231000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:55.231000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+W0729 03:31:55.232000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:55.232000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  passed=True match=1.000000 max_err=0.000976562 candidate=0.809ms flashinfer=0.031ms bw=1.3GB/s
+[case 13] b16_l1024_d64: B=16, L=1024, D=64, H_kv=8
+  passed=True match=1.000000 max_err=0.000976562 candidate=1.945ms flashinfer=0.080ms bw=17.3GB/s
+[case 14] b64_l4096_d64: B=64, L=4096, D=64, H_kv=8
+  passed=True match=1.000000 max_err=0.000488281 candidate=10.244ms flashinfer=0.593ms bw=52.4GB/s
+[case 15] b4_l16384_d64: B=4, L=16384, D=64, H_kv=8
+  passed=True match=1.000000 max_err=0.000244141 candidate=29.213ms flashinfer=0.209ms bw=4.6GB/s
+[case 16] b1_l1024_d256: B=1, L=1024, D=256, H_kv=4
+W0729 03:31:55.486000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:55.486000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+W0729 03:31:55.487000 14671 site-packages/torch/utils/cpp_extension.py:2527] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0729 03:31:55.487000 14671 site-packages/torch/utils/cpp_extension.py:2527] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  passed=True match=1.000000 max_err=0.000976562 candidate=3.502ms flashinfer=0.042ms bw=1.2GB/s
+[case 17] b16_l1024_d256: B=16, L=1024, D=256, H_kv=4
+  passed=True match=1.000000 max_err=0.000976562 candidate=4.097ms flashinfer=0.142ms bw=16.4GB/s
+[case 18] b64_l1024_d256: B=64, L=1024, D=256, H_kv=4
+  passed=True match=1.000000 max_err=0.000976562 candidate=4.732ms flashinfer=0.458ms bw=56.7GB/s
+[case 19] b4_l4096_d256: B=4, L=4096, D=256, H_kv=4
+  passed=True match=1.000000 max_err=0.000488281 candidate=15.843ms flashinfer=0.125ms bw=4.2GB/s
+[case 20] b4_l16384_d256: B=4, L=16384, D=256, H_kv=4
+  passed=True match=1.000000 max_err=0.000244141 candidate=63.245ms flashinfer=0.406ms bw=4.2GB/s
+[case 21] odd_b3_l1023_d128: B=3, L=1023, D=128, H_kv=4
+  passed=True match=1.000000 max_err=0.000976562 candidate=2.142ms flashinfer=0.036ms bw=2.9GB/s
+[case 22] odd_b5_l257_d256: B=5, L=257, D=256, H_kv=4
+  passed=True match=1.000000 max_err=0.00195312 candidate=0.800ms flashinfer=0.043ms bw=6.6GB/s
+[result] /data/flashinfer_task_package/paged_decode/stage_a_baseline_results.csv
+[meta]   /data/flashinfer_task_package/paged_decode/stage_a_baseline_results.meta.txt
