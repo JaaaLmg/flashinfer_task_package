@@ -3,26 +3,26 @@
   Testcase  #1
     Config:  sol016_trace_synthetic_b33_total16294: batch=33, total_q=16294, total_kv=16294, max_q=987, max_kv=987, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=sol-execbench 016 axes
 
-  Baseline:           1.572000     ms
-  User kernel:        1.093000     ms
-  Speedup vs base:    1.438       x
+  Baseline:           1.592000     ms
+  User kernel:        0.915000     ms
+  Speedup vs base:    1.740       x
 
-  Score ratio:        0.624848      (62.48%)
-  Display score:      62            / 100
+  Score ratio:        0.635022      (63.50%)
+  Display score:      63            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
-=== SPJ Report - FlashInfer Batch Prefill ===
+==== SPJ Report - FlashInfer Batch Prefill ===
 ----------------------------------------------------------------
   Testcase  #2
     Config:  equal_b1_s1024: batch=1, total_q=1024, total_kv=1024, max_q=1024, max_kv=1024, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           0.251000     ms
-  User kernel:        0.139000     ms
-  Speedup vs base:    1.806       x
+  Baseline:           0.250000     ms
+  User kernel:        0.104000     ms
+  Speedup vs base:    2.404       x
 
-  Score ratio:        0.675909      (67.59%)
-  Display score:      67            / 100
+  Score ratio:        0.706215      (70.62%)
+  Display score:      70            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -31,12 +31,12 @@
   Testcase  #3
     Config:  equal_b1_s4096: batch=1, total_q=4096, total_kv=4096, max_q=4096, max_kv=4096, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           1.676000     ms
-  User kernel:        1.419000     ms
-  Speedup vs base:    1.181       x
+  Baseline:           1.612000     ms
+  User kernel:        1.077000     ms
+  Speedup vs base:    1.497       x
 
-  Score ratio:        0.565918      (56.59%)
-  Display score:      56            / 100
+  Score ratio:        0.599479      (59.95%)
+  Display score:      59            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -45,12 +45,12 @@
   Testcase  #4
     Config:  equal_b1_s16384: batch=1, total_q=16384, total_kv=16384, max_q=16384, max_kv=16384, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           22.434000    ms
-  User kernel:        19.991000    ms
-  Speedup vs base:    1.122       x
+  Baseline:           22.077000    ms
+  User kernel:        16.190000    ms
+  Speedup vs base:    1.364       x
 
-  Score ratio:        0.550687      (55.07%)
-  Display score:      55            / 100
+  Score ratio:        0.576920      (57.69%)
+  Display score:      57            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -59,12 +59,12 @@
   Testcase  #5
     Config:  equal_b4_s1024: batch=4, total_q=4096, total_kv=4096, max_q=1024, max_kv=1024, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           0.634000     ms
-  User kernel:        0.412000     ms
-  Speedup vs base:    1.539       x
+  Baseline:           0.619000     ms
+  User kernel:        0.356000     ms
+  Speedup vs base:    1.739       x
 
-  Score ratio:        0.646170      (64.62%)
-  Display score:      64            / 100
+  Score ratio:        0.634872      (63.49%)
+  Display score:      63            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -73,12 +73,12 @@
   Testcase  #6
     Config:  equal_b4_s4096: batch=4, total_q=16384, total_kv=16384, max_q=4096, max_kv=4096, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           6.059000     ms
-  User kernel:        5.171000     ms
-  Speedup vs base:    1.172       x
+  Baseline:           6.042000     ms
+  User kernel:        4.237000     ms
+  Speedup vs base:    1.426       x
 
-  Score ratio:        0.566791      (56.68%)
-  Display score:      56            / 100
+  Score ratio:        0.587800      (58.78%)
+  Display score:      58            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -87,12 +87,12 @@
   Testcase  #7
     Config:  equal_b16_s1024: batch=16, total_q=16384, total_kv=16384, max_q=1024, max_kv=1024, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           2.017000     ms
-  User kernel:        1.607000     ms
-  Speedup vs base:    1.255       x
+  Baseline:           2.015000     ms
+  User kernel:        1.247000     ms
+  Speedup vs base:    1.616       x
 
-  Score ratio:        0.582743      (58.27%)
-  Display score:      58            / 100
+  Score ratio:        0.617719      (61.77%)
+  Display score:      61            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -101,12 +101,12 @@
   Testcase  #8
     Config:  equal_b16_s2048: batch=16, total_q=32768, total_kv=32768, max_q=2048, max_kv=2048, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=equal-length stress
 
-  Baseline:           6.630000     ms
-  User kernel:        5.444000     ms
-  Speedup vs base:    1.218       x
+  Baseline:           6.590000     ms
+  User kernel:        4.471000     ms
+  Speedup vs base:    1.474       x
 
-  Score ratio:        0.579167      (57.92%)
-  Display score:      57            / 100
+  Score ratio:        0.595787      (59.58%)
+  Display score:      59            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -115,12 +115,12 @@
   Testcase  #9
     Config:  tileops_varlen_uniform_q512_k1024_b4: batch=4, total_q=2048, total_kv=4096, max_q=512, max_kv=1024, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=TileOPs varlen prefill
 
-  Baseline:           0.502000     ms
-  User kernel:        0.310000     ms
-  Speedup vs base:    1.619       x
+  Baseline:           0.497000     ms
+  User kernel:        0.263000     ms
+  Speedup vs base:    1.890       x
 
-  Score ratio:        0.660774      (66.08%)
-  Display score:      66            / 100
+  Score ratio:        0.653947      (65.39%)
+  Display score:      65            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -129,12 +129,12 @@
   Testcase  #10
     Config:  tileops_varlen_mixed_b4: batch=4, total_q=1536, total_kv=3584, max_q=640, max_kv=1280, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=TileOPs varlen prefill
 
-  Baseline:           0.408000     ms
-  User kernel:        0.264000     ms
-  Speedup vs base:    1.545       x
+  Baseline:           0.396000     ms
+  User kernel:        0.212000     ms
+  Speedup vs base:    1.868       x
 
-  Score ratio:        0.642822      (64.28%)
-  Display score:      64            / 100
+  Score ratio:        0.651316      (65.13%)
+  Display score:      65            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -143,12 +143,12 @@
   Testcase  #11
     Config:  tileops_varlen_q_lt_kv_b2: batch=2, total_q=1024, total_kv=3072, max_q=512, max_kv=2048, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=TileOPs varlen prefill
 
-  Baseline:           0.430000     ms
-  User kernel:        0.319000     ms
-  Speedup vs base:    1.348       x
+  Baseline:           0.393000     ms
+  User kernel:        0.221000     ms
+  Speedup vs base:    1.778       x
 
-  Score ratio:        0.597373      (59.74%)
-  Display score:      59            / 100
+  Score ratio:        0.640065      (64.01%)
+  Display score:      64            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -157,12 +157,12 @@
   Testcase  #12
     Config:  sol016_trace_synthetic_b27_total12251: batch=27, total_q=12251, total_kv=12251, max_q=873, max_kv=873, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=sol-execbench 016 axes
 
-  Baseline:           1.162000     ms
-  User kernel:        0.767000     ms
-  Speedup vs base:    1.515       x
+  Baseline:           1.165000     ms
+  User kernel:        0.649000     ms
+  Speedup vs base:    1.795       x
 
-  Score ratio:        0.639203      (63.92%)
-  Display score:      63            / 100
+  Score ratio:        0.642227      (64.22%)
+  Display score:      64            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -171,12 +171,12 @@
   Testcase  #13
     Config:  sol016_trace_synthetic_b15_total969: batch=15, total_q=969, total_kv=969, max_q=123, max_kv=123, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=sol-execbench 016 axes
 
-  Baseline:           0.408000     ms
-  User kernel:        0.241000     ms
-  Speedup vs base:    1.693       x
+  Baseline:           0.142000     ms
+  User kernel:        0.033000     ms
+  Speedup vs base:    4.303       x
 
-  Score ratio:        0.632718      (63.27%)
-  Display score:      63            / 100
+  Score ratio:        0.811429      (81.14%)
+  Display score:      81            / 100
   Pass:               OK
 ----------------------------------------------------------------
 
@@ -185,11 +185,11 @@
   Testcase  #14
     Config:  edge_single_token: batch=1, total_q=1, total_kv=1, max_q=1, max_kv=1, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=sol-execbench 016 small axis
 
-  Baseline:           0.106000     ms
+  Baseline:           0.101000     ms
   User kernel:        0.005000     ms
-  Speedup vs base:    21.200      x
+  Speedup vs base:    20.200      x
 
-  Score ratio:        0.955039      (95.50%)
+  Score ratio:        0.952830      (95.28%)
   Display score:      95            / 100
   Pass:               OK
 ----------------------------------------------------------------
@@ -199,11 +199,11 @@
   Testcase  #15
     Config:  edge_tail_non_power2: batch=2, total_q=98, total_kv=98, max_q=65, max_kv=65, q_heads=32, kv_heads=4, head_dim_qk=128, head_dim_vo=128, causal=1, source=TileOPs correctness tail case
 
-  Baseline:           0.104000     ms
-  User kernel:        0.013000     ms
-  Speedup vs base:    8.000       x
+  Baseline:           0.101000     ms
+  User kernel:        0.010000     ms
+  Speedup vs base:    10.100      x
 
-  Score ratio:        0.895676      (89.57%)
-  Display score:      89            / 100
+  Score ratio:        0.909910      (90.99%)
+  Display score:      90            / 100
   Pass:               OK
 ----------------------------------------------------------------
