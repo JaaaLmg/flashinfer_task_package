@@ -1,2 +1,0 @@
-case_id,name,batch_size,seq_len,total_q,total_kv,max_q,max_kv,visible_pairs,candidate_ms,flashinfer_ms,slowdown_vs_flashinfer,effective_tflops,candidate_repeats,flashinfer_repeats,match_ratio,max_abs_error,severe_error_count,passed
-4,equal_b1_l16384,1,16384,16384,16384,16384,16384,134225920,16.312576293945312,21.956198120117186,0.7429599698774374,134.81362070908776,1,5,1.0,0.00390625,0,True

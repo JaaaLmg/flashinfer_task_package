@@ -3,8 +3,8 @@
 ## Objective
 
 Optimize XPU-OJ problem 20001 (`BatchPrefillWithRaggedKVCache`) while preserving exact
-BF16 attention semantics. The requested stopping condition is a local, calibrated score
-projection of at least 73.67; a projection is not an online result.
+BF16 attention semantics. The current user-requested stopping condition is an actual online
+score strictly above 70.0; projections only choose what to submit.
 
 ## ABI and public inputs
 
@@ -34,8 +34,8 @@ the hot path, and assumptions about hidden indptr values are forbidden.
 ## Source, build, and measurement
 
 - Immutable correctness anchor: `ragged_prefill_baseline.cu`.
-- Current promoted source at resume: `ragged_prefill_optimized.cu` (historical CQ,
-  SHA-256 `3cee75cf0c376c81c235a0df25c9208220f36f28bc6de0d664091064e92192dc`).
+- Current promoted source: `ragged_prefill_optimized.cu` (DN restored after DV, SHA-256
+  `ca3b0c75f3b9615f11ffb43570296995da3bfedfd981ba5d3ff20204f5b5e1be`).
 - Historical candidates: `ragged_prefill_stage_*.cu`; new candidates use immutable
   `ragged_prefill_stage_<id>.cu` names and are never overwritten.
 - Harness: `benchmark_stage_a.py`, which dynamically loads `run_kernel`, uses GPU events,
@@ -48,8 +48,17 @@ the hot path, and assumptions about hidden indptr values are forbidden.
 
 ## Online calibration
 
-`online/checkpoint_result` is preserved verbatim and currently reports the 67.60-ish
-aggregate checkpoint, but its submitted source SHA is not recorded in the report. The
-last documented 70.27 report for historical CL is not present as raw text in this checkout;
-therefore any new projection must label its anchor and uncertainty. Use per-case ratios and
-`calibrate_online.py` (or the repository projection helper) rather than aggregate latency.
+`online/checkpoint_result` is preserved verbatim and is the actual DN checkpoint supplied by
+the user (online leaderboard reported 68.27; the visible per-case score-ratio mean is 68.7179).
+Historical CL's 70.266667 record in Git commit `d2f1610` belongs to an obsolete online baseline:
+the restored CL behavior scored only 65.93 on the current platform, so it is invalid as a
+calibration or promotion anchor. Every future candidate must use this checkpoint's per-case online
+times and a same-harness DN local anchor; after any submission, replace/add the raw online report
+before selecting the next direction.
+
+The latest same-source local reconfirmation is `stage_ea_configurable_dn_full_results.csv`
+(15/15 pass, 27.350 ms total).  Projecting per case from `stage_ds_dn_reconfirm_full_results.csv`
+and the raw checkpoint gives 68.579 formula points in
+`online/stage_ea_configurable_dn_projection.csv`.  The raw report's visible mean exceeds the
+user-supplied displayed aggregate by 0.448 points, so the conservatively display-calibrated
+estimate is about 68.13; it is not an online result.
