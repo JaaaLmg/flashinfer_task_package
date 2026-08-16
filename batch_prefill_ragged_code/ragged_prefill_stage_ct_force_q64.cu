@@ -1,13 +1,4 @@
 
-// Final promoted configuration (stage DN): preserve exact paths generally,
-// use Q128 on the proven B<=4 medium regime, and apply the public 99%-accuracy
-// budget only to the single very-long equal-length regime.
-#define RAGGED_FIXED_REF_CONST_SCALE 1
-#define RAGGED_Q128_MEDIUM 1
-#define RAGGED_EQUAL_KV_CAP_PERCENT 60
-#define RAGGED_EQUAL_KV_CAP_MIN_LEN 8192
-#define RAGGED_EQUAL_KV_CAP_SCALE 1
-
 // BEGIN INLINED: ragged_prefill_optimized.cu
 #include <stdint.h>
 #include <cuda_bf16.h>
@@ -8388,12 +8379,7 @@ __device__ __forceinline__ void update_mdo_states_fixed_ref(
     typename KTraits::AttentionVariant variant,
     typename KTraits::DTypeQKAccum (*s_frag)[KTraits::NUM_MMA_KV][4],
     typename KTraits::DTypeQKAccum* m, float* d) {
-  const float sm_scale =
-#ifdef RAGGED_FIXED_REF_CONST_SCALE
-      0.127517431f;
-#else
-      variant.sm_scale_log2;
-#endif
+  const float sm_scale = variant.sm_scale_log2;
 #pragma unroll
   for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
     if constexpr (INIT_REF) {
@@ -8413,23 +8399,10 @@ __device__ __forceinline__ void update_mdo_states_fixed_ref(
     for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
       fma_f32x2(&s_frag[mma_q][mma_kv][0], &s_frag[mma_q][mma_kv][0], sm_scale, m_scale);
       fma_f32x2(&s_frag[mma_q][mma_kv][2], &s_frag[mma_q][mma_kv][2], sm_scale, m_scale);
-#ifdef RAGGED_FIXED_REF_HALF2_EXP
-      const half2 e01 = math::ptx_exp2(
-          __floats2half2_rn(s_frag[mma_q][mma_kv][0], s_frag[mma_q][mma_kv][1]));
-      const half2 e23 = math::ptx_exp2(
-          __floats2half2_rn(s_frag[mma_q][mma_kv][2], s_frag[mma_q][mma_kv][3]));
-      const float2 e01_f = __half22float2(e01);
-      const float2 e23_f = __half22float2(e23);
-      s_frag[mma_q][mma_kv][0] = e01_f.x;
-      s_frag[mma_q][mma_kv][1] = e01_f.y;
-      s_frag[mma_q][mma_kv][2] = e23_f.x;
-      s_frag[mma_q][mma_kv][3] = e23_f.y;
-#else
 #pragma unroll
       for (uint32_t r = 0; r < 4; ++r) {
         s_frag[mma_q][mma_kv][r] = math::ptx_exp2(s_frag[mma_q][mma_kv][r]);
       }
-#endif
     }
   }
 }
@@ -8440,12 +8413,7 @@ __device__ __forceinline__ void update_mdo_states_pair_fixed_ref(
     typename KTraits::DTypeQKAccum (*s0)[KTraits::NUM_MMA_KV][4],
     typename KTraits::DTypeQKAccum (*s1)[KTraits::NUM_MMA_KV][4],
     typename KTraits::DTypeQKAccum* m, float* d) {
-  const float sm_scale =
-#ifdef RAGGED_FIXED_REF_CONST_SCALE
-      0.127517431f;
-#else
-      variant.sm_scale_log2;
-#endif
+  const float sm_scale = variant.sm_scale_log2;
 #pragma unroll
   for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
     if constexpr (INIT_REF) {
@@ -8468,34 +8436,11 @@ __device__ __forceinline__ void update_mdo_states_pair_fixed_ref(
       fma_f32x2(&s0[mma_q][mma_kv][2], &s0[mma_q][mma_kv][2], sm_scale, m_scale);
       fma_f32x2(&s1[mma_q][mma_kv][0], &s1[mma_q][mma_kv][0], sm_scale, m_scale);
       fma_f32x2(&s1[mma_q][mma_kv][2], &s1[mma_q][mma_kv][2], sm_scale, m_scale);
-#ifdef RAGGED_FIXED_REF_HALF2_EXP
-      const half2 s0_e01 = math::ptx_exp2(
-          __floats2half2_rn(s0[mma_q][mma_kv][0], s0[mma_q][mma_kv][1]));
-      const half2 s0_e23 = math::ptx_exp2(
-          __floats2half2_rn(s0[mma_q][mma_kv][2], s0[mma_q][mma_kv][3]));
-      const half2 s1_e01 = math::ptx_exp2(
-          __floats2half2_rn(s1[mma_q][mma_kv][0], s1[mma_q][mma_kv][1]));
-      const half2 s1_e23 = math::ptx_exp2(
-          __floats2half2_rn(s1[mma_q][mma_kv][2], s1[mma_q][mma_kv][3]));
-      const float2 s0_e01_f = __half22float2(s0_e01);
-      const float2 s0_e23_f = __half22float2(s0_e23);
-      const float2 s1_e01_f = __half22float2(s1_e01);
-      const float2 s1_e23_f = __half22float2(s1_e23);
-      s0[mma_q][mma_kv][0] = s0_e01_f.x;
-      s0[mma_q][mma_kv][1] = s0_e01_f.y;
-      s0[mma_q][mma_kv][2] = s0_e23_f.x;
-      s0[mma_q][mma_kv][3] = s0_e23_f.y;
-      s1[mma_q][mma_kv][0] = s1_e01_f.x;
-      s1[mma_q][mma_kv][1] = s1_e01_f.y;
-      s1[mma_q][mma_kv][2] = s1_e23_f.x;
-      s1[mma_q][mma_kv][3] = s1_e23_f.y;
-#else
 #pragma unroll
       for (uint32_t r = 0; r < 4; ++r) {
         s0[mma_q][mma_kv][r] = math::ptx_exp2(s0[mma_q][mma_kv][r]);
         s1[mma_q][mma_kv][r] = math::ptx_exp2(s1[mma_q][mma_kv][r]);
       }
-#endif
     }
   }
 }
@@ -8702,15 +8647,7 @@ __device__ __forceinline__ void compute_sfm_v_with_perm(
     for (uint32_t mma_q = 0; mma_q < KTraits::NUM_MMA_Q; ++mma_q) {
 #pragma unroll
       for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV; ++mma_kv) {
-#ifdef RAGGED_SCALAR_ROWSUM
-        float row_sum = s_frag[mma_q][mma_kv][0] + s_frag[mma_q][mma_kv][1] +
-                        s_frag[mma_q][mma_kv][2] + s_frag[mma_q][mma_kv][3];
-        row_sum += math::shfl_xor_sync(row_sum, 32);
-        row_sum += math::shfl_xor_sync(row_sum, 16);
-        d[mma_q] += row_sum;
-#else
         mma::m16k16_rowsum_f16f16f32(&d[mma_q], s_frag_f16[mma_q][mma_kv]);
-#endif
       }
     }
   }
@@ -9207,24 +9144,13 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
   load_q_global_smem<KTraits>(qo_packed_idx_base, qo_upper_bound, q_ptr_base, q_stride_n,
                               q_stride_h, group_size, &qo_smem);
 
-  uint32_t num_iterations = ceil_div(
+  const uint32_t num_iterations = ceil_div(
       (MASK_MODE == MaskMode::kCausal
            ? min(chunk_size,
                  sub_if_greater_or_zero(
                      kv_len - qo_len + (((qo_tile_idx + 1) * CTA_TILE_Q) >> 3), chunk_start))
            : chunk_size),
       CTA_TILE_KV);
-#ifdef RAGGED_EQUAL_KV_CAP_PERCENT
-#ifndef RAGGED_EQUAL_KV_CAP_MIN_LEN
-#define RAGGED_EQUAL_KV_CAP_MIN_LEN 4096
-#endif
-  if (qo_len == kv_len && kv_len >= RAGGED_EQUAL_KV_CAP_MIN_LEN) {
-    const uint32_t cap_iterations =
-        (kv_len * RAGGED_EQUAL_KV_CAP_PERCENT + 100 * CTA_TILE_KV - 1) /
-        (100 * CTA_TILE_KV);
-    num_iterations = min(num_iterations, cap_iterations);
-  }
-#endif
 
   const uint32_t mask_iteration =
       (MASK_MODE == MaskMode::kCausal
@@ -9526,24 +9452,6 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
 
   sync_threads();
   finalize_m<KTraits>(variant, m);
-
-#ifdef RAGGED_EQUAL_KV_CAP_SCALE
-  if (qo_len == kv_len && kv_len >= RAGGED_EQUAL_KV_CAP_MIN_LEN) {
-    const uint32_t cap_iterations =
-        (kv_len * RAGGED_EQUAL_KV_CAP_PERCENT + 100 * CTA_TILE_KV - 1) /
-        (100 * CTA_TILE_KV);
-    const uint32_t cap_tokens = min(kv_len, cap_iterations * CTA_TILE_KV);
-#pragma unroll
-    for (uint32_t mma_q = 0; mma_q < NUM_MMA_Q; ++mma_q) {
-      const uint32_t packed_q = qo_packed_idx_base + mma_q * 16 + lane_idx % 16;
-      const uint32_t q_idx = packed_q >> 3;
-      const uint32_t visible_tokens = min(kv_len, q_idx + 1);
-      if (visible_tokens > cap_tokens) {
-        d[mma_q] *= float(visible_tokens) / float(cap_tokens);
-      }
-    }
-  }
-#endif
 
   // normalize d
   normalize_d<KTraits>(o_frag, m, d);
@@ -11025,20 +10933,8 @@ extern "C" void run_kernel(
     single_token<<<static_cast<int>(batch), 256>>>(v, o, qi, ki, static_cast<int>(batch));
     return;
   }
-  int cta_tile_q;
-  if (seq_len <= 128) {
-    cta_tile_q = 64;
-#ifdef RAGGED_Q128_MEDIUM
-  } else if (seq_len <= 1280 && batch <= 4) {
-    cta_tile_q = 128;
-#endif
-  } else if (seq_len <= 1280 && batch <= 15) {
-    cta_tile_q = 64;
-  } else if (seq_len == 2048 && batch == 2) {
-    cta_tile_q = 64;
-  } else {
-    cta_tile_q = 128;
-  }
+  // Candidate CT: measure the Q64 pipeline independently of the historical dispatcher.
+  const int cta_tile_q = 64;
   CachedPlan* plan = get_cached_plan(q, qi, ki, static_cast<int>(batch),
                                      static_cast<int>(seq_len), cta_tile_q);
   if (plan == nullptr) return;
