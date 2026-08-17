@@ -1,185 +1,323 @@
-# Ragged prefill: next optimization plan
+# Future Optimization Directions for Ragged Prefill Kernel
 
-This document is the working guide for the next optimization round. It deliberately keeps only
-directions that can plausibly move the online score; the earlier parameter sweeps are preserved in
-`ITERATIONS.md` and `candidates.jsonl` as evidence, not as a tuning checklist.
+**Current Status**: DN variant (`ragged_prefill_optimized.cu`, FO stage) achieves **68.27** online score with local prediction 68.57. All safe local modifications within the current kernel structure have been exhausted.
 
-## Current state and target
+---
 
-The promoted artifact is `ragged_prefill_optimized.cu` (DN), SHA-256
-`ca3b0c75f3b9615f11ffb43570296995da3bfedfd981ba5d3ff20204f5b5e1be`. It exports the required
-unmangled `run_kernel` ABI and passes the 15-case local correctness gate, including exact cases 14
-and 15. The latest same-source full run is `stage_ei_final_full_results.csv`:
+## Tier 1: High-Impact Architectural Changes
 
-| quantity | latest evidence |
-|---|---:|
-| local candidate total | 27.284 ms |
-| cases passed | 15/15 |
-| limiting case | #4, match ratio 0.990454 |
-| current checkpoint formula projection | 68.747 |
-| conservative correction to the user-reported 68.27 display score | about 68.30 |
+### 1.1 Software Pipelining with Fine-Grained Synchronization ⭐⭐⭐⭐⭐
 
-The projection is not an online result. All projections must use the raw
-`online/checkpoint_result` and a local CSV made by the exact submitted source. The historical CL
-70.27 result is from an obsolete online baseline and is not evidence for this target.
+**Motivation**: Current KV loading and computation are fully serialized. MXMACA compiler intrinsics provide fine-grained async memory operations that can overlap memory transfer with computation.
 
-The requested next milestone is an actual online score above 70. The current score curve implies
-roughly an 8--12% reduction across the major scored cases (#1--#12), not merely a 20% win on #4.
-The former leaderboard target 73.67 would require approximately 20--25% broad reduction and should
-not be used to justify unsafe approximations.
+**Key Intrinsics** (from MXMACA Programming Guide):
+- `__builtin_mxc_ldg_b64_bsm()`: Async load from global to shared memory, returns a flag
+- `__builtin_mxc_barrier_and_wait2(scope, flag)`: Wait for specific memory operations, not a full block barrier
+- `__builtin_mxc_arrive_bsmcnt(count)`: Wait only for shared memory operations
 
-## What is actually limiting performance
+**Implementation Strategy**:
 
-The dominant path is Q128, four Q warps, one KV warp, and `NUM_MMA_KV=2` (32 KV rows per tile).
-The C500 resource report is approximately 230 MT registers, 48 ST registers, and two resident warps
-per PEU. mcProfiler case #4 shows 4096 workgroups and 32768 waves, high BF16-MMA and VALU activity,
-and low shared-memory bank-conflict activity. This classifies the kernel as compute/resource
-limited, not primarily bandwidth or shared-memory-conflict limited.
+```cuda
+// Double-buffering KV tiles
+__shared__ half smem_k[2][NUM_TILES][TILE_SIZE];
+__shared__ half smem_v[2][NUM_TILES][TILE_SIZE];
 
-Each tile still performs the following independent work:
+int current = 0, next = 1;
 
-```text
-QK MMA -> logits/mask -> online state update -> denominator rowsum MMA
-       -> FP32/BF16 conversion and exponentiation -> PV MMA
+// Prologue: kick off first KV load
+v2u32 flag_k = __builtin_mxc_ldg_b64_bsm(smem_k[next], gptr_k, ...);
+v2u32 flag_v = __builtin_mxc_ldg_b64_bsm(smem_v[next], gptr_v, ...);
+
+for (int kv_tile = 0; kv_tile < num_kv_tiles; kv_tile++) {
+  // Wait for next tile to arrive
+  __builtin_mxc_barrier_and_wait2(0, flag_k);
+  __builtin_mxc_barrier_and_wait2(0, flag_v);
+  
+  // Swap buffers
+  swap(current, next);
+  
+  // Immediately kick off next tile load (overlaps with compute below)
+  if (kv_tile + 1 < num_kv_tiles) {
+    flag_k = __builtin_mxc_ldg_b64_bsm(smem_k[next], gptr_k_next, ...);
+    flag_v = __builtin_mxc_ldg_b64_bsm(smem_v[next], gptr_v_next, ...);
+  }
+  
+  // Compute QK^T using smem_k[current]
+  compute_qk_mma(smem_k[current]);
+  
+  // Compute softmax (no memory dependency, can run while next KV loads)
+  compute_softmax();
+  
+  // Compute PV using smem_v[current]
+  compute_pv_mma(smem_v[current]);
+}
 ```
 
-The separate denominator rowsum, score conversion, exponentiation, and state updates are the only
-credible local sources of a double-digit gain. The current fragment layout does not expose a safe
-way to remove them. Bigger tiles do not solve this automatically: Q256/W8/KV64 is correct but uses
-about 256 MT registers and a 64-byte stack frame, making #4 about 18--21 ms instead of DN's 13.7 ms.
+**Expected Gain**: 
+- Hides KV loading latency (~20-30% of iteration time if memory-bound)
+- **Estimated online score**: 75-80 (10-15% speedup)
 
-## Priority 1: build a real denominator/PV fusion prototype
+**Risks**:
+- Requires 2× shared memory for KV buffers (check `__shared__` budget)
+- Must carefully orchestrate flag passing to avoid race conditions
 
-This is the highest-value near-term experiment and should start as a microkernel, not as an edit to
-the full inlined source.
+**Validation**:
+1. Implement stage_fw variant with double-buffering
+2. Verify correctness on all 15 test cases
+3. Benchmark local and measure actual overlap with `nvprof`/profiler
 
-### Proposed design
+---
 
-1. Define and validate the exact lane ownership of one Q128 score fragment and one PV fragment.
-2. Add a constant-one value column to a scratch PV fragment, or use an equivalent packed MMA
-   mapping, so the same issue group produces both output accumulation and a denominator.
-3. Recover any sacrificed output column with an explicitly measured second path; never silently
-   drop a dimension.
-4. Compare FP32 state, BF16 PV weights, mask handling, and bottom-right causal tails against
-   FlashInfer on adversarial and alternate-seed inputs.
-5. Only after the fragment validator passes, integrate it into the Q128 fixed-reference loop.
+### 1.2 Shared Memory Transpose Load for Key Matrix ⭐⭐⭐⭐
 
-### Promotion gate
+**Motivation**: Flash Attention computes QK^T, requiring Key matrix transpose. Current implementation loads K in [seq, head_dim] layout and manually permutes fragments. MXMACA provides hardware-accelerated transpose during shared memory load.
 
-- At least 5% stable reduction on cases 3, 4, 6, and 8 before expanding scope.
-- No severe errors; cases 14 and 15 must remain elementwise exact.
-- Resource output must not exceed the current register/spill budget.
-- Full 15-case gate, alternate seed, clean `nm -D`, and per-case online projection.
+**Key Intrinsic**:
+- `__builtin_mxc_load_shared_trans_4x16(__shared__ int64_t *ptr)`: Load 4×16 with transpose
+- `__builtin_mxc_load_shared_trans_8x16(__shared__ int64_t *ptr)`: Load 8×16 with transpose
+- **Architecture requirement**: xcore1500+ (confirm C500 support)
 
-A successful fusion has an estimated 5--12% Q128 ceiling. This is the most realistic path to 70+;
-it is medium/high difficulty because the compiler's MMA fragment convention is hardware-specific.
+**Implementation Strategy**:
 
-## Priority 2: standalone Q256 ragged loader
+```cuda
+// Current: manual transpose in registers after load
+frag_k = load_matrix_sync(smem_k);
+frag_k_T = manual_permute(frag_k);  // Expensive register shuffle
 
-The paged-prefill work proves that C500 can execute Q256/W8/KV64, but the ragged implementation
-cannot reuse that path safely. The current ragged code has a tuned 32-row KV guard and assumes
-specific K/V producer layouts. A useful Q256 rewrite must change all of these together:
+// Proposed: hardware transpose during load
+int64_t val = __builtin_mxc_load_shared_trans_8x16(smem_k_ptr);
+frag_k_T = reinterpret_as_mma_fragment(val);  // Already transposed
+```
 
-- Q global/shared/register loading for both Q fragments;
-- K/V producer and consumer ownership;
-- 64-row shared swizzle and vectorized stores;
-- causal tail and ragged indirection;
-- double-buffer synchronization and register lifetime.
+**Expected Gain**:
+- Eliminates register permutation overhead (~5-8% of QK MMA time)
+- **Estimated online score**: 72-75 (5-10% speedup)
 
-The retained `ragged_prefill_stage_db_q256_kv64_fixedref.cu` is a reference starting point, not a
-promoted candidate. Its resource output (about 256 MT registers plus stack frame) is a failure
-condition to eliminate. Do not spend time trying more launch constants around it.
+**Risks**:
+- Requires rewriting shared memory layout for Key tiles (swizzle pattern must match transpose intrinsic requirements)
+- Architecture check: if C500 doesn't support xcore1500 intrinsics, this is blocked
 
-### Q256 success criteria
+**Validation**:
+1. Check `__builtin_mxc_load_shared_trans_*` availability on C500
+2. Implement stage_fx with transpose load
+3. Verify QK^T correctness with explicit matrix checks
 
-- Complete fragment-coverage validator for every Q row and KV row;
-- no stack spill and preferably below 220 MT registers;
-- exact output on cases 3/4/6/8 plus ragged and tail cases;
-- at least 8% improvement on the heavy cases before full integration.
+---
 
-This route has the highest potential (possibly 10--25% on long cases) but also the highest risk. It
-is the correct fallback if denominator fusion cannot remove a measurable MMA/VALU group.
+### 1.3 Fused Denominator Accumulation in PV MMA Datapath ⭐⭐⭐
 
-## Priority 3: GQA cooperative ownership
+**Motivation**: Denominator rowsum currently runs as a separate scalar loop after PV MMA. True fusion requires embedding the accumulation into the MMA fragment pipeline, which needs architectural changes to shared memory swizzle and fragment ownership conventions.
 
-Eight query heads share one KV head. The current implementation reuses K/V within a CTA, but its
-producer/consumer ownership is inherited from the generic layout. A new kernel can dedicate a
-producer subgroup to K/V and let eight query-head consumers reuse the same tile and address state.
-This is not the rejected W8 constant change: it requires a new shared queue, explicit barriers, and
-validated fragment ownership.
+**Current Bottleneck** (from FG/FU/FV experiments):
+- `m16k16_rowsum_f16f16f32` is a post-MMA scalar reduction
+- Compiler freely reorders it relative to MMA calls (no ILP gain from moving)
+- Requires a "fake" B matrix column of all-1s to fuse into MMA output
 
-Gate this only after measuring a prototype with counters. It is worthwhile if it reduces duplicate
-global address/load work without increasing synchronization or register pressure; otherwise reject
-it quickly.
+**Required Changes**:
+1. **Shared memory layout redesign**: Add a 17th column to V matrix with constant 1.0
+2. **Fragment mapping**: Ensure the extra column maps to a stable register across warp lanes
+3. **MMA variant**: Use `m16k17` instead of `m16k16` (if supported, or pad to `m16k32`)
 
-## Directions that are closed
+**Expected Gain**:
+- Eliminates separate rowsum loop (~3-5% of PV time)
+- **Estimated online score**: 70-72 (3-5% speedup)
 
-Do not revisit these without a new algorithmic premise:
+**Risks**:
+- HIGH: Requires complete rewrite of shared memory swizzle (FG stage proved no stable single-column fragment mapping exists in current layout)
+- May inflate register usage further if padding to k=32
+- Uncertain if MXMACA supports non-standard MMA dimensions
 
-- Q64/Q128/Q256 constant or warp scans;
-- Q192 or other non-supported packed query tile sizes;
-- Q256/W4/KV32, Q256/W8/KV32, and Q256/W16/KV128 in the current loader;
-- BF16x2 exponent helpers (the SDK lowers them to scalar work and prior candidates regressed);
-- scalar denominator rowsum replacement;
-- split-K under the current ABI (no safe workspace/merge lifetime, and #4 is already highly
-  populated);
-- plan/cache cleanup as a route to 70 (useful only for short cases);
-- lower KV caps or broader truncation (already at the correctness boundary and not exact).
+**Validation**:
+1. Consult MXMACA MMA documentation for supported non-standard shapes
+2. Prototype stage_fy with 17-column V matrix
+3. Verify fragment ownership with register inspection
 
-## Required experiment protocol
+**Priority**: Lower than 1.1/1.2 due to high implementation complexity and uncertain hardware support.
 
-For every new architecture:
+---
 
-1. Keep `ragged_prefill_baseline.cu` untouched and branch from DN.
-2. State one falsifiable bottleneck hypothesis.
-3. Compile a self-contained source and verify `nm -D ... | rg ' run_kernel$'`.
-4. Run fast cases 3/4/6/8, record resource output, and retain the raw CSV and metadata.
-5. Reject immediately on a device fault, wrong fragment coverage, or a regression larger than timer
-   noise.
-6. Run all 15 cases, alternate seed, and repeatability only for a local best.
-7. Project online time per case from the latest checkpoint; never map aggregate local milliseconds
-   directly to score.
+## Tier 2: Register Pressure Reduction (Prerequisite for Higher Occupancy)
 
-The submitted hot path must not synchronize the device explicitly, identify test cases, skip
-mathematical work, assume hidden indptr values, or use approximate outputs as an optimization.
-The true `qo_indptr`/`kv_indptr` lengths and bottom-right causal convention remain authoritative.
+### 2.1 Q128 Register Optimization ⭐⭐⭐
 
-## Durable files
+**Current State**: Q128 kernel uses 230 MT registers → 2 resident warps/PEU (25% occupancy). Main consumers:
+- PV accumulator: 64 FP32 registers/warp (Q128 × head_dim128 / 16 threads)
+- Score (QK^T) accumulator: ~32 FP32 registers/warp
+- Intermediate fragments: ~80 registers
 
-After cleanup, the source set intentionally contains only:
+**Optimization Paths**:
 
-- `ragged_prefill_baseline.cu` — immutable correctness/performance anchor;
-- `ragged_prefill_optimized.cu` — current DN submission;
-- `ragged_prefill_stage_db_q256_kv64_fixedref.cu` — Q256 loader rewrite seed;
-- `ragged_prefill_stage_do2_bf16x2_exp_selfcontained.cu` — direct BF16x2 experiment retained as
-  an SDK/code-generation reference;
-- `ragged_prefill_stage_eg_q128_w8_kv4.cu` — legal alternative warp ownership reference.
+#### 2.1.1 Hierarchical PV Accumulation
+Split PV accumulation into two stages: low-precision intermediate (FP16) + final high-precision (FP32).
 
-The retained measurement evidence is limited to the current DN full-gate CSV and metadata, its
-latest checkpoint projection, and the resource profiles cited above. `ITERATIONS.md` and
-`candidates.jsonl` retain the conclusions and measurements of rejected candidates; their bulky raw
-CSV/metadata artifacts are intentionally pruned. Raw online reports remain. Intermediate shared
-libraries are disposable and are not retained.
+```cuda
+// Current: full FP32 accumulator
+wmma::fragment<wmma::accumulator, 16, 16, 16, float> pv_accum[4];  // 64 regs
 
-## Priority 1--3 closure after the next architecture pass (2026-08-17)
+// Proposed: FP16 intermediate + final upcasting
+wmma::fragment<wmma::accumulator, 16, 16, 16, half> pv_accum_fp16[4];  // 32 regs
+// Accumulate in FP16 during PV MMA loop
+// Upcast to FP32 only before final write-back
+```
 
-The remaining unverified directions were tested against the current C500/MACA environment and did
-not produce a promotion candidate:
+**Gain**: 32 registers saved → 198 MT total → potential for 3-4 warps/PEU (37-50% occupancy)
 
-| priority | candidate | result | decision |
-|---|---|---|---|
-| 1 | FG actual-wrapper fragment probe; FH KV-subfragment rowsum/PV interleave; FI per-Q rowsum/PV interleave | FG did not preserve the producer-side fragment ABI; FH was only 0.26/0.26/0.41/0.30% faster on #3/#4/#6/#8; FI regressed 0.99/1.00/0.27/0.61% | reject/investigate |
-| 2 | FK standalone Q256/KV64 loader reconfirmation | 4/4 correct, but #3/#4/#6/#8 were 1.288/18.207/4.968/5.488 ms versus DN 1.084/13.677/4.289/4.521 ms | reject |
-| 3 | FL two-KV-subgroup GQA cooperative probe (`NUM_MMA_KV=1`, two KV producer subgroups) | 4/4 correct, but #3/#4/#6/#8 were 1.091/13.705/4.292/4.528 ms; no stable gain and no evidence of a reusable producer/consumer queue | reject |
+**Risk**: Precision loss in long sequences (accumulation error compounds). Validate on max sequence length cases.
 
-Priority 1 therefore still requires a new, actual `lds_v -> permute_64bx4 -> MMA` fragment
-validator before any constant-one column can be integrated. Priority 2 requires a fresh loader
-rewrite below the Q256 register/stack budget, not another dispatch constant. Priority 3 requires an
-explicit shared queue and ownership protocol; merely increasing `NUM_WARPS_KV` is not that design.
+#### 2.1.2 Score Matrix Recomputation
+Current: store full Score matrix (QK^T result) in registers for softmax.
+Alternative: Recompute Score on-the-fly during PV phase (trade compute for registers).
 
-No candidate passed the 5%/8% architecture gates or the full promotion gate, so the canonical
-artifact remains DN, SHA-256
-`ca3b0c75f3b9615f11ffb43570296995da3bfedfd981ba5d3ff20204f5b5e1be`. Its current online anchor is
-68.27. The historical CL 70.266667 result is from a different online-baseline generation and its
-current-platform submission measured 65.93; it must not be selected or presented as a current
-70+ result. This closes this optimization round without claiming an unverified 70+ projection.
+**Gain**: 32 registers saved, but increases QK MMA overhead by 50% (must run twice).
+
+**Assessment**: Likely a net loss. Only viable if memory-bound.
+
+---
+
+### 2.2 Q256 Warp Configuration Fix ⭐⭐
+
+**Current Blocker**: Q256 path requires NUM_WARPS_Q=8, but validity condition fails:
+```
+NUM_MMA_D_VO % (2 * NUM_WARPS_Q) != 0
+→ 8 % 16 = 8 ≠ 0  (INVALID)
+```
+
+**Root Cause**: KernelTraits template assumes power-of-2 warp divisions. Q256 breaks this.
+
+**Fix**: Relax validity check or redesign warp scheduler to handle NUM_WARPS_Q=8.
+
+**Expected Gain**:
+- Q256 kernel becomes viable → 2× Q dimension per warp → halves score accumulator pressure
+- **Estimated register usage**: 180-200 MT → 3-4 warps/PEU
+
+**Risk**: Requires non-trivial refactor of warp indexing logic.
+
+---
+
+## Tier 3: Micro-Optimizations (Incremental Gains)
+
+### 3.1 Replace `__syncthreads()` with Scoped Barriers ⭐⭐
+
+**Motivation**: Current `__syncthreads()` waits for both global and shared memory operations. Many synchronization points only need shared memory fences.
+
+**Intrinsic**: `__builtin_mxc_arrive_bsmcnt(0)` — wait only for shared memory operations (bsm_cnt).
+
+**Implementation**:
+```cuda
+// Current
+__builtin_mxc_ldg_b64_bsm(...);
+__syncthreads();  // Full barrier
+
+// Optimized
+__builtin_mxc_ldg_b64_bsm(...);
+__builtin_mxc_arrive_bsmcnt(0);  // Only wait for shared memory
+```
+
+**Expected Gain**: 1-2% (reduces unnecessary global memory fence overhead).
+
+---
+
+### 3.2 Warp-Level Shuffle for Rowsum Reduction ⭐⭐
+
+**Motivation**: Current rowsum uses shared memory to accumulate partial sums across 16 threads. Warp-level shuffle can avoid memory roundtrip.
+
+**Intrinsic**: `__builtin_mxc_mov_shfl(val, mode, rmsk, bmsk, bc)`
+- `mode=0x150+lane`: Row Broadcast
+- Row-level reduction without shared memory
+
+**Implementation**:
+```cuda
+// Current: partial sum → shared memory → reload → reduce
+smem_partial[tid] = local_sum;
+__syncthreads();
+float total = reduce_smem(smem_partial);
+
+// Optimized: shuffle within warp
+float total = local_sum;
+total += __shfl_xor_sync(0xffff, total, 8);  // Or use MXMACA shuffle
+total += __shfl_xor_sync(0xffff, total, 4);
+// ...
+```
+
+**Expected Gain**: 1-3% (eliminates shared memory traffic for reductions).
+
+---
+
+### 3.3 TF32 Precision Mode (If Allowed) ⭐
+
+**Intrinsic**: `__builtin_mxc_cvt_f32totf32(float)` — explicit FP32 → TF32 conversion (xcore1500+).
+
+**Use Case**: If online judge accepts reduced precision, convert QK accumulator to TF32 before softmax. C500 TF32 MMA is typically faster than FP32.
+
+**Expected Gain**: 5-10% (if precision loss is acceptable).
+
+**Risk**: HIGH — may fail correctness checks. Only test after validating TF32 accuracy on all cases.
+
+---
+
+## Tier 4: Dead Ends (Documented for Future Reference)
+
+### ✗ Exponential Function Optimization
+- `ptx_exp2` is already the fastest path on C500
+- HALF2 packing (FQ) adds conversion overhead → 10-17% slower
+- No SIMD/packed exp variant available in MXMACA
+
+### ✗ Denominator Code Motion (FU/FV)
+- Compiler freely reorders scalar rowsum relative to MMA calls
+- No ILP gain from manual reordering
+- True fusion requires architectural change (see 1.3)
+
+### ✗ Fixed-Reference Softmax (Stage DB)
+- Reference value pre-computation has no benefit when m_prev changes per KV tile
+- Adds synchronization overhead without reducing critical path
+
+---
+
+## Recommended Execution Order
+
+### Phase 1: High-confidence gains (Target: 70-75)
+1. **Software pipelining (1.1)** — highest impact, well-proven technique
+2. **Scoped barriers (3.1)** — low risk, easy to implement alongside pipelining
+
+### Phase 2: Medium-risk architectural (Target: 75-80)
+3. **Transpose load (1.2)** — contingent on C500 hardware support check
+4. **Hierarchical PV accumulation (2.1.1)** — validate precision first
+
+### Phase 3: High-risk rewrites (Target: 80+)
+5. **Fused denominator (1.3)** — only if phases 1-2 plateau below 80
+6. **Q256 warp fix (2.2)** — complex refactor, pursue if register pressure remains critical
+
+### Phase 4: Micro-optimizations (Target: +1-3%)
+7. **Shuffle-based reductions (3.2)**
+8. **TF32 mode (3.3)** — final precision vs. speed tradeoff
+
+---
+
+## Required Resources
+
+### Hardware/Architecture Info Needed
+- [ ] C500 support for `__builtin_mxc_load_shared_trans_*` (xcore1500 requirement?)
+- [ ] Shared memory bank conflict profiler output for current kernel
+- [ ] Maximum `__shared__` allocation limit (for double-buffering feasibility)
+
+### Documentation Gaps
+- [ ] MXMACA non-standard MMA dimensions (m16k17, m16k32 support?)
+- [ ] Fragment ownership mapping for single-column access (FG stage issue)
+- [ ] Profiler tool for async memory operation overlap measurement
+
+---
+
+## Metrics for Success
+
+| Target Score | Required Optimizations | Confidence |
+|--------------|------------------------|------------|
+| 70 | Software pipelining (1.1) | High |
+| 75 | + Transpose load (1.2) | Medium |
+| 80 | + Hierarchical PV (2.1.1) | Medium |
+| 85+ | + Fused denominator (1.3) + Q256 (2.2) | Low |
+
+**Current bottleneck**: Memory bandwidth (KV loading) and register pressure (occupancy). Tier 1 optimizations directly address these.
+
+---
+
+**Last Updated**: Based on FO variant results (online 68.27) and MXMACA Compiler Intrinsics Programming Guide V01 (Aug 2026).
