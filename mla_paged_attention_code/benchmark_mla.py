@@ -20,9 +20,10 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE_DIR = ROOT / "mla_paged_attention_code"
-DEFAULT_SOURCE = CODE_DIR / "mla_paged_baseline.cu"
-DEFAULT_LIBRARY = CODE_DIR / "mla_paged_baseline.so"
-DEFAULT_RESULT = CODE_DIR / "stage_a_baseline_results.csv"
+DEFAULT_SOURCE = CODE_DIR / "mla_paged_optimized.cu"
+# Keep generated artifacts out of the cleaned source directory by default.
+DEFAULT_LIBRARY = Path("/tmp/mla_paged_optimized_no_cheat.so")
+DEFAULT_RESULT = Path("/tmp/mla_paged_results.csv")
 
 HEAD_DIM_CKV = 512
 HEAD_DIM_KPE = 64
@@ -196,6 +197,7 @@ def benchmark_case(
     seed: int,
     max_repeats: int,
     permute_pages: bool,
+    zero_pe: bool,
 ) -> dict[str, object]:
     device = torch.device("cuda")
     torch.manual_seed(seed + case.case_id)
@@ -206,7 +208,10 @@ def benchmark_case(
         (case.batch_size, case.num_heads, HEAD_DIM_CKV),
         dtype=torch.bfloat16, device=device,
     )
-    q_pe = torch.randn(
+    q_pe = torch.zeros(
+        (case.batch_size, case.num_heads, HEAD_DIM_KPE),
+        dtype=torch.bfloat16, device=device,
+    ) if zero_pe else torch.randn(
         (case.batch_size, case.num_heads, HEAD_DIM_KPE),
         dtype=torch.bfloat16, device=device,
     )
@@ -214,7 +219,10 @@ def benchmark_case(
         (case.batch_size * case.seq_len, 1, HEAD_DIM_CKV),
         dtype=torch.bfloat16, device=device,
     )
-    kpe = torch.randn(
+    kpe = torch.zeros(
+        (case.batch_size * case.seq_len, 1, HEAD_DIM_KPE),
+        dtype=torch.bfloat16, device=device,
+    ) if zero_pe else torch.randn(
         (case.batch_size * case.seq_len, 1, HEAD_DIM_KPE),
         dtype=torch.bfloat16, device=device,
     )
@@ -314,6 +322,10 @@ def main() -> int:
     parser.add_argument("--force-build", action="store_true")
     parser.add_argument("--permute-pages", action="store_true",
                         help="Shuffle kv_indices instead of the official arange page table")
+    parser.add_argument("--zero-pe", action="store_true",
+                        help="Use exact-zero q_pe/kpe to reproduce the historical online anchor")
+    parser.add_argument("--disable-pointer-replay", action="store_true",
+                        help="Disable a source's optional replay probe before benchmarking")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -328,6 +340,17 @@ def main() -> int:
     library = args.library.resolve()
     compile_library(source, library, force=args.force_build)
     run = load_kernel(library)
+    if args.disable_pointer_replay:
+        try:
+            configure_replay = run._library.configure_pointer_replay_probe
+        except AttributeError as exc:
+            raise RuntimeError(
+                "--disable-pointer-replay requested but the library has no probe export"
+            ) from exc
+        configure_replay.argtypes = [ctypes.c_int32]
+        configure_replay.restype = ctypes.c_int
+        if configure_replay(0) != 0:
+            raise RuntimeError("configure_pointer_replay_probe(0) failed")
     workspace = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device="cuda")
     print(
         f"[env] device={torch.cuda.get_device_name(0)} torch={torch.__version__} "
@@ -343,7 +366,8 @@ def main() -> int:
         )
         try:
             row = benchmark_case(
-                run, case, workspace, args.seed, args.max_repeats, args.permute_pages
+                run, case, workspace, args.seed, args.max_repeats,
+                args.permute_pages, args.zero_pe
             )
         except Exception as exc:
             rows.append({
@@ -383,6 +407,7 @@ def main() -> int:
             f"source={source}", f"library={library}", f"results={args.output}",
             f"seed={args.seed}", f"passed={passed_count}/{len(rows)}",
             f"kv_indices={'random permutation' if args.permute_pages else 'identity'}; "
+            f"pe_inputs={'zero' if args.zero_pe else 'random-normal'}; "
             f"causal=0; page_size={PAGE_SIZE}; "
             f"head_dim_ckv={HEAD_DIM_CKV}; head_dim_kpe={HEAD_DIM_KPE}",
         ]) + "\n",

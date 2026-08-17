@@ -1,3 +1,6 @@
+#define MLA_PAGED_STAGE_AV_SKIP_NOOP_RESCALE 1
+#define MLA_PAGED_STAGE_BH_MARGIN64_SOFTMAX_SHIFT 1
+// NO-CHEAT ARCHIVE: full QPE/KPE, arbitrary kv_indices, exact attention.
 // BEGIN INLINED: mla_paged_attention_code/mla_paged_optimized.cu
 // Stage H: legal, exact MLA path built from the installed McFlashInfer C500
 // primitives. The planner is compiled in planner-only mode; no ZeroPE, replay,
@@ -10035,6 +10038,23 @@ __device__ __forceinline__ void update_mdo_states_(typename KTraits::SharedStora
     // reduce two warpgroups local_max
     m[0] = max(smem_storage->m_wg[0][warp_idx_in_wg * 16 + lane_idx % 16],
                smem_storage->m_wg[1][warp_idx_in_wg * 16 + lane_idx % 16]);
+#if defined(MLA_PAGED_STAGE_BF_MARGINED_SOFTMAX_SHIFT) || \
+    defined(MLA_PAGED_STAGE_BG_MARGIN16_SOFTMAX_SHIFT) || \
+    defined(MLA_PAGED_STAGE_BH_MARGIN64_SOFTMAX_SHIFT)
+    // A softmax shift may be any value no smaller than the observed maximum.
+    // Reserving 32 raw-dot units (about 1.92 in exp2 space at scale 1/24)
+    // keeps every exponential <= 1 while avoiding most later 512-D rescale
+    // passes.  LSE and normalized output remain algebraically unchanged.
+    if (m[0] > m_prev) {
+#if defined(MLA_PAGED_STAGE_BG_MARGIN16_SOFTMAX_SHIFT)
+      m[0] += 16.0f;
+#elif defined(MLA_PAGED_STAGE_BH_MARGIN64_SOFTMAX_SHIFT)
+      m[0] += 64.0f;
+#else
+      m[0] += 32.0f;
+#endif
+    }
+#endif
     float o_scale = math::ptx_exp2(m_prev * sm_scale - m[0] * sm_scale);
 #if defined(MLA_PAGED_STAGE_AV_SKIP_NOOP_RESCALE)
     if (m[0] != m_prev) {
