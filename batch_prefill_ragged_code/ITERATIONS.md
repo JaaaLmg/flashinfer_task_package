@@ -219,3 +219,123 @@ Both variants slightly exceed the anchor local time but project above the curren
 - **FP `unroll_paired_loop` — reject.** All 15 cases pass, but FP local total (27.344 ms) is
   slightly slower than FO (27.325 ms) and projects 68.56 vs FO's 68.57. FO is the better
   candidate. Projection CSV: `online/fp_proj.csv`.
+
+## Stage FQ: HALF2_EXP (2026-08-17)
+
+Hypothesis: Enable `RAGGED_FIXED_REF_HALF2_EXP` (already present as `#ifdef` guards at lines 8416
+and 8471) to replace element-wise float `ptx_exp2` calls with packed `half2` `ptx_exp2` calls
+inside `update_mdo_states_fixed_ref` and `update_mdo_states_pair_fixed_ref`. Expected benefit:
+two exponents per instruction on the MACA xcore1000 softmax rescaling path.
+
+- **Defines present in source:** `RAGGED_FIXED_REF_CONST_SCALE 1`, `RAGGED_Q128_MEDIUM 1`,
+  `RAGGED_EQUAL_KV_CAP_PERCENT 60`, `RAGGED_EQUAL_KV_CAP_MIN_LEN 8192`,
+  `RAGGED_EQUAL_KV_CAP_SCALE 1`. `RAGGED_FIXED_REF_HALF2_EXP` was present as an `#ifdef` guard
+  but **not defined** (disabled).
+- **HALF2_EXP previously tried:** No — not found in any prior ITERATIONS.md entry.
+- **Change made:** Added `#define RAGGED_FIXED_REF_HALF2_EXP 1` on line 6 of
+  `ragged_prefill_stage_fq.cu`.
+
+Results (all 15/15 cases passed, match_ratio >= 0.99 for all):
+
+| Case | Before (ms) | After FQ (ms) | Ratio  |
+|------|-------------|---------------|--------|
+| 03 equal_b1_l4096   | 1.086 | 1.257 | 1.157 |
+| 04 equal_b1_l16384  | 13.674| 15.989| 1.169 |
+| 06 equal_b4_l4096   | 4.290 | 4.955 | 1.155 |
+| 08 equal_b16_l2048  | 4.522 | 5.207 | 1.151 |
+
+All 15 cases regressed by 10–17% except case 14 (single_token, essentially noise at 0.008 ms).
+
+Projected score:
+
+| Stage | Projected online | vs current 68.27 |
+|-------|-----------------|------------------|
+| FQ    | 66.18           | -2.09 pts        |
+
+- **FQ `HALF2_EXP` — reject.** Enabling `RAGGED_FIXED_REF_HALF2_EXP` makes the kernel ~12–17%
+  slower across all meaningful cases, projecting to 66.18 vs the current online best of 68.27.
+  The half2 exp path likely adds pack/unpack overhead (float→half2→float conversions) that
+  outweighs any throughput gain from the paired instruction on MetaX C500. The `#ifdef` guard is
+  left disabled (undefined) in `ragged_prefill_optimized.cu`. `ragged_prefill_stage_fq.cu`
+  retained as artifact.
+
+## Stages FR/FT closure (2026-08-17)
+
+- **FR `faster_exp2_search` — skip.** Searched for vectorized/packed exp2 builtins on C500
+  (`vexp2`, `__mxc_exp2`, `fast_exp`, etc.) in `/opt/maca/tools/cu-bridge/include/` and
+  `/usr/local/mxcc/include/`. None found. The `ptx_exp2` wrapper (`__builtin_exp2f`) is already
+  the hardware instruction. No faster alternative exists; the stage file is a no-op copy.
+- **FT `b1_seq1280_q64_dispatch` — reject.** Changed the Q128_MEDIUM dispatch to exclude
+  `batch=1`, routing `batch=1, seq_len in [256,1280]` from Q128 to Q64. Case 2 (b1_l1024)
+  timing was unchanged at 0.105 ms—the case is too small for tile size to matter. All 15 cases
+  passed with match_ratio=1.0; total was 27.325 ms vs FO anchor 27.284 ms (slightly slower).
+  Not promoted. `ragged_prefill_stage_ft.cu` retained.
+
+**Round closure:** FQ, FR, FT are all rejected. The current canonical source remains
+`ragged_prefill_optimized.cu` (FO variant, projected 68.57). No safe local modification
+achieves 70+. Architectural rewrite (denominator/PV fusion requiring C500 fragment ABI
+validation, or Q256 loader below 220 MT registers) is the only viable path forward.
+
+## Denominator rowsum reorder experiments (FU--FV, 2026-08-17)
+
+Hypothesis: the rowsum loop inside `compute_sfm_v_with_perm` (which accumulates the softmax
+denominator `d`) runs before the PV MMA loop. Moving it to after the PV loop (FU), or
+interleaving it inside the per-mma_kv iteration of the PV loop (FV), might hide latency by
+letting the MMA units drain before the scalar reduction, or by keeping `s_frag_f16` live in
+registers closer to when it is also consumed by the MMA calls.
+
+### FU — rowsum deferred to after PV MMA loop
+
+Change: removed the `if constexpr (use_softmax)` rowsum block that preceded the `for mma_kv`
+PV MMA loop and placed an identical block immediately after the PV MMA loop closes.  No other
+code was modified.
+
+Results (all 15/15 cases passed, match_ratio >= 0.99 for all):
+
+| Case | FO/DN anchor (ms) | FU (ms) | delta  |
+|------|-------------------|---------|--------|
+| 03 equal_b1_l4096   | ~1.084 | 1.081 | -0.003 |
+| 04 equal_b1_l16384  | ~13.68 | 13.687| +0.007 |
+| 06 equal_b4_l4096   | ~4.289 | 4.285 | -0.004 |
+| 08 equal_b16_l2048  | ~4.521 | 4.518 | -0.003 |
+
+Full 15-case local total: **27.300 ms** (DN anchor: 27.284 ms, FO anchor: 27.284 ms).
+
+- **FU `rowsum_after_pv` — reject.** 15/15 pass, correctness preserved, but local total
+  27.300 ms exceeds the 27.284 ms anchor by 0.016 ms. The reorder provides no measurable
+  throughput benefit; the compiler already schedules the independent rowsum and PV MMA
+  operations freely within the unrolled loop body.
+
+### FV — rowsum interleaved inline per mma_kv fragment
+
+Change: removed the separate rowsum block entirely and placed a `if constexpr (use_softmax)`
+rowsum sub-loop (over `mma_q`) immediately after the `for mma_d` inner loop inside the outer
+`for mma_kv` PV loop.  This way the rowsum for fragment `mma_kv` executes right after all PV
+MMAs that consume `s_frag_f16[*][mma_kv]` have completed for that fragment, rather than being
+batched at the beginning or end.
+
+Results (all 15/15 cases passed, match_ratio >= 0.99 for all):
+
+| Case | FO/DN anchor (ms) | FV (ms) | delta  |
+|------|-------------------|---------|--------|
+| 03 equal_b1_l4096   | ~1.084 | 1.081 | -0.003 |
+| 04 equal_b1_l16384  | ~13.68 | 13.681| -0.007 |
+| 06 equal_b4_l4096   | ~4.289 | 4.284 | -0.005 |
+| 08 equal_b16_l2048  | ~4.521 | 4.517 | -0.004 |
+
+Full 15-case local total: **27.290 ms** (DN anchor: 27.284 ms).
+
+- **FV `rowsum_inline_per_kv` — reject.** 15/15 pass, correctness preserved, but local total
+  27.290 ms still exceeds the 27.284 ms anchor by 0.006 ms. The margin is within measurement
+  noise and not a promotable gain.
+
+### Denominator reorder path closure
+
+Both FU and FV are rejected. The rowsum loop (`m16k16_rowsum_f16f16f32`) is a scalar reduction
+over register data that the compiler can freely reorder relative to the MMA calls; moving it
+explicitly does not change instruction-level scheduling in a beneficial way on C500.  The
+architectural barrier noted in earlier rounds still stands: a genuine fused denominator requires
+a new fragment/shared-memory mapping that embeds the accumulation inside the PV MMA datapath
+itself, not a code-motion edit.  DN (`ragged_prefill_optimized.cu`, FO variant) remains the
+canonical source at 68.27 online. The denominator reorder is the last attempted path within the
+current kernel structure; all safe local modifications are exhausted.
