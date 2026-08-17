@@ -1,0 +1,335 @@
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #1
+    Config:  batch=1, seq_len=1024, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.105000     ms
+  User kernel:        0.022000     ms
+  Speedup vs base:    4.773       x
+
+  Score ratio:        0.826772      (82.68%)
+  Display score:      82            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #2
+    Config:  batch=1, seq_len=4096, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.125000     ms
+  User kernel:        0.033000     ms
+  Speedup vs base:    3.788       x
+
+  Score ratio:        0.791139      (79.11%)
+  Display score:      79            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #3
+    Config:  batch=1, seq_len=8192, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.146000     ms
+  User kernel:        0.042000     ms
+  Speedup vs base:    3.476       x
+
+  Score ratio:        0.776596      (77.66%)
+  Display score:      77            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #4
+    Config:  batch=1, seq_len=16384, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.171000     ms
+  User kernel:        0.056000     ms
+  Speedup vs base:    3.054       x
+
+  Score ratio:        0.753304      (75.33%)
+  Display score:      75            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #5
+    Config:  batch=4, seq_len=1024, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.124000     ms
+  User kernel:        0.024000     ms
+  Speedup vs base:    5.167       x
+
+  Score ratio:        0.837838      (83.78%)
+  Display score:      83            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #6
+    Config:  batch=4, seq_len=4096, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.160000     ms
+  User kernel:        0.044000     ms
+  Speedup vs base:    3.636       x
+
+  Score ratio:        0.784314      (78.43%)
+  Display score:      78            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #7
+    Config:  batch=4, seq_len=8192, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.204000     ms
+  User kernel:        0.065000     ms
+  Speedup vs base:    3.138       x
+
+  Score ratio:        0.758364      (75.84%)
+  Display score:      75            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #8
+    Config:  batch=4, seq_len=16384, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.271000     ms
+  User kernel:        0.096000     ms
+  Speedup vs base:    2.823       x
+
+  Score ratio:        0.738420      (73.84%)
+  Display score:      73            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #9
+    Config:  batch=16, seq_len=1024, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.176000     ms
+  User kernel:        0.046000     ms
+  Speedup vs base:    3.826       x
+
+  Score ratio:        0.792793      (79.28%)
+  Display score:      79            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #10
+    Config:  batch=16, seq_len=4096, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.285000     ms
+  User kernel:        0.091000     ms
+  Speedup vs base:    3.132       x
+
+  Score ratio:        0.757979      (75.80%)
+  Display score:      75            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #11
+    Config:  batch=16, seq_len=8192, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.363000     ms
+  User kernel:        0.153000     ms
+  Speedup vs base:    2.373       x
+
+  Score ratio:        0.703488      (70.35%)
+  Display score:      70            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #12
+    Config:  batch=16, seq_len=16384, heads=64, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.569000     ms
+  User kernel:        0.278000     ms
+  Speedup vs base:    2.047       x
+
+  Score ratio:        0.671783      (67.18%)
+  Display score:      67            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #13
+    Config:  batch=1, seq_len=1024, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.109000     ms
+  User kernel:        0.022000     ms
+  Speedup vs base:    4.955       x
+
+  Score ratio:        0.832061      (83.21%)
+  Display score:      83            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #14
+    Config:  batch=1, seq_len=4096, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.125000     ms
+  User kernel:        0.035000     ms
+  Speedup vs base:    3.571       x
+
+  Score ratio:        0.781250      (78.12%)
+  Display score:      78            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #15
+    Config:  batch=1, seq_len=8192, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.152000     ms
+  User kernel:        0.047000     ms
+  Speedup vs base:    3.234       x
+
+  Score ratio:        0.763819      (76.38%)
+  Display score:      76            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #16
+    Config:  batch=1, seq_len=16384, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.185000     ms
+  User kernel:        0.071000     ms
+  Speedup vs base:    2.606       x
+
+  Score ratio:        0.722656      (72.27%)
+  Display score:      72            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #17
+    Config:  batch=4, seq_len=1024, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.123000     ms
+  User kernel:        0.032000     ms
+  Speedup vs base:    3.844       x
+
+  Score ratio:        0.793548      (79.35%)
+  Display score:      79            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #18
+    Config:  batch=4, seq_len=4096, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.183000     ms
+  User kernel:        0.060000     ms
+  Speedup vs base:    3.050       x
+
+  Score ratio:        0.753086      (75.31%)
+  Display score:      75            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #19
+    Config:  batch=4, seq_len=8192, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.263000     ms
+  User kernel:        0.091000     ms
+  Speedup vs base:    2.890       x
+
+  Score ratio:        0.742938      (74.29%)
+  Display score:      74            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #20
+    Config:  batch=4, seq_len=16384, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.404000     ms
+  User kernel:        0.153000     ms
+  Speedup vs base:    2.641       x
+
+  Score ratio:        0.725314      (72.53%)
+  Display score:      72            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #21
+    Config:  batch=16, seq_len=1024, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.191000     ms
+  User kernel:        0.060000     ms
+  Speedup vs base:    3.183       x
+
+  Score ratio:        0.760956      (76.10%)
+  Display score:      76            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #22
+    Config:  batch=16, seq_len=4096, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.399000     ms
+  User kernel:        0.161000     ms
+  Speedup vs base:    2.478       x
+
+  Score ratio:        0.712500      (71.25%)
+  Display score:      71            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #23
+    Config:  batch=16, seq_len=8192, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.532000     ms
+  User kernel:        0.278000     ms
+  Speedup vs base:    1.914       x
+
+  Score ratio:        0.656790      (65.68%)
+  Display score:      65            / 100
+  Pass:               OK
+----------------------------------------------------------------
+
+=== SPJ Report - MLA Paged KV Cache ===
+----------------------------------------------------------------
+  Testcase  #24
+    Config:  batch=16, seq_len=16384, heads=128, ckv_dim=512, kpe_dim=64, page_size=1, causal=0
+
+  Baseline:           0.899000     ms
+  User kernel:        0.524000     ms
+  Speedup vs base:    1.716       x
+
+  Score ratio:        0.631764      (63.18%)
+  Display score:      63            / 100
+  Pass:               OK
+----------------------------------------------------------------
