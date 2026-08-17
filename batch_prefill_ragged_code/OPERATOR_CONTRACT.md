@@ -62,3 +62,13 @@ and the raw checkpoint gives 68.579 formula points in
 `online/stage_ea_configurable_dn_projection.csv`.  The raw report's visible mean exceeds the
 user-supplied displayed aggregate by 0.448 points, so the conservatively display-calibrated
 estimate is about 68.13; it is not an online result.
+
+## Current user constraints (2026-08-17)
+
+- Treat `online/checkpoint_result` and the user's reported **68.27** as the sole current online
+  calibration anchor; do not use obsolete online submissions or historical score records as a
+  numerical mapping.
+- Do not spend new iterations on micro-parameter tuning. New candidates must be architectural
+  rewrites/refactors motivated by Tier 1 in `FUTURE_OPTIMIZATION_DIRECTIONS.md`.
+- The leaderboard reference is 73.67; local projections remain estimates and never replace an
+  actual online result.

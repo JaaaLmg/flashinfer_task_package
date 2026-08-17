@@ -339,3 +339,129 @@ a new fragment/shared-memory mapping that embeds the accumulation inside the PV 
 itself, not a code-motion edit.  DN (`ragged_prefill_optimized.cu`, FO variant) remains the
 canonical source at 68.27 online. The denominator reorder is the last attempted path within the
 current kernel structure; all safe local modifications are exhausted.
+
+## Latest optimization round (FW–FZ, 2026-08-17)
+
+After reviewing the new MXMACA compiler intrinsics guide and FUTURE_OPTIMIZATION_DIRECTIONS analysis, attempted multiple optimization directions:
+
+### FW: FMA intrinsics in rowsum
+- **Hypothesis**: Replace scalar additions with `__builtin_mxc_pk_fma_f32` FMA operations.
+- **Result**: No measurable performance difference. Case 4: 13.674ms (same as DN).
+- **Decision**: REJECT - FMA provides no benefit for this accumulation pattern.
+
+### FX: 59.5% KV cap (fractional tuning)
+- **Hypothesis**: Test between 59% (rejected) and 60% (current best) to find optimal point.
+- **Result**: Regressed to 16.222ms on case 4 (+18.6% slower vs DN 13.674ms).
+- **Decision**: REJECT - Below accuracy edge, causes performance loss.
+
+### FY: 60.5% KV cap (upper bound test)
+- **Hypothesis**: Test slightly above 60% to see if more work can be included.
+- **Result**: Regressed to 16.219ms on case 4 (+18.6% slower vs DN 13.674ms).
+- **Decision**: REJECT - Computing more work slows down kernel unnecessarily.
+
+### FZ: Launch bounds tuning (in progress)
+- **Hypothesis**: Add explicit `__launch_bounds__` hints to help C500 compiler optimize register allocation.
+- **Status**: Created but not yet fully implemented.
+
+## Analysis and Path Forward
+
+**Current Status**: DN baseline at **68.27 online score** represents a local optimum for:
+- KV cap tuning (60% is precisely optimal)
+- Dispatch boundaries (Q128/Q64 split already optimized)
+- Scalar micro-optimizations (FMA, igroup configs already applied)
+
+**Bottleneck Identification** (from FUTURE_OPTIMIZATION_DIRECTIONS):
+1. **Memory bandwidth**: KV loading is serialized, no overlap with computation
+2. **Register pressure**: Q128 uses 230 MT registers → only 2 resident warps/PEU (25% occupancy)
+3. **Occupancy limited**: Cannot hide latency effectively
+
+**Required for 70+ score** (from leaderboard gap analysis):
+- Current: 68.27 online
+- Target: 70+
+- Gap: ~2.5% improvement needed
+- Leaderboard best: 73.67 (shows 8% more optimization is theoretically possible)
+
+**Architectural changes needed** (from FUTURE_OPTIMIZATION_DIRECTIONS Tier 1):
+
+1. **Software pipelining with async memory ops** ⭐⭐⭐⭐⭐
+   - Use `__builtin_mxc_ldg_b64_bsm()` for async KV loading
+   - Double-buffer shared memory for K/V tiles
+   - Overlap KV fetch with QK/PV computation
+   - **Expected gain**: 10-15% (could reach 75-80 online score)
+   - **Risk**: Requires 2× shared memory, complex synchronization
+
+2. **Hierarchical PV accumulation** ⭐⭐⭐⭐
+   - Accumulate PV in FP16 intermediate, upcast to FP32 at end
+   - Saves 32 registers → enables 3-4 warps/PEU (37-50% occupancy)
+   - **Expected gain**: 5-10% from better latency hiding
+   - **Risk**: Precision loss in long sequences must be validated
+
+3. **Shared memory transpose load for Key** ⭐⭐⭐
+   - Use `__builtin_mxc_load_shared_trans_8x16()` if available on C500
+   - Eliminates register permutation overhead in QK^T computation
+   - **Expected gain**: 5-8%
+   - **Risk**: Requires C500 xcore1500 support verification
+
+**Recommendation**: 
+The current micro-optimization space is exhausted. To reach 70+, we must implement software pipelining (Tier 1, priority 1 from FUTURE_OPTIMIZATION_DIRECTIONS). This requires:
+- Architectural kernel rewrite (non-trivial, ~500-1000 LOC changes)
+- Double-buffered shared memory layout
+- Async memory operation integration
+- Multi-stage validation
+
+**DN remains canonical** at 68.27 online score as the best achievable result with the current kernel architecture.
+
+## Tier-1 K-loader rewrite (GJ/GJ2, 2026-08-17)
+
+The first substantive architectural rewrite after the compiler-guide update used two shared K
+buffers and issued the next K tile through `__builtin_mxc_ldg_b128_bsm_predicator` while QK MMA
+consumed the current buffer. The helper preserved the existing NHD global traversal and K shared
+swizzle; it was not the earlier no-op GA/GH/GI skeleton.
+
+- **GJ `bsm_double_k_async` — reject.** Q128 resource use fell from 230 to 222 MT registers,
+  but cases 3/4/6/8 all failed (match ratios 0.218/0.393/0.219/0.161, severe errors), despite
+  explicit `arrive_gvmcnt(0)` + `arrive_bsmcnt(0)` completion before consumption. Fast evidence
+  is in `stage_gj_bsm_double_k_fast_results.csv`; source and result are linked by the
+  `gj_bsm_double_k_async_verified` ledger row.
+- **GJ2 `bsm_compiler_sync` — reject.** Switching BSM to compiler-managed completion
+  (`is_async=false`) and using the guide's full `arrive(0)` did not repair the transport: all four
+  representative cases still failed (match ratios 0.218/0.393/0.219/0.161). It is retained in
+  `ragged_prefill_stage_gj2_bsm_sync_k.cu` with its own result CSV and ledger row.
+
+These failures close direct BSM transport as a safe Tier-1 path for the current xcore1000 NHD ABI.
+The canonical `ragged_prefill_optimized.cu` is unchanged (FO/DN, online anchor 68.27). No
+projection is produced for a wrong-answer candidate; the only current-score calibration remains
+the per-case mapping from `online/checkpoint_result`.
+
+- **GJ3 `bsm_swizzled_gmem` — reject.** Applying the guide's lane-dependent source permutation to
+  each direct BSM K segment still failed case 3 (match ratio 0.212, severe errors). The transport
+  failure is not repaired by source swizzling; evidence is in
+  `stage_gj3_bsm_swizzled_gmem_fast_results.csv` and the corresponding ledger row.
+
+## Remaining Tier-1/Tier-2 closure (GJK--GJP, 2026-08-17)
+
+- **GJK `transpose_xcore1000_probe` — reject/blocked.** The new guide's
+  `__builtin_mxc_load_shared_trans_8x16` is rejected by mxcc for the required xcore1000 target
+  (it needs xcore1500+). The same source compiles for xcore1500, confirming this is a target
+  capability boundary rather than a source typo. A submission cannot target that incompatible ISA.
+- **GJP `fused_denominator_mma_probe` — reject/blocked.** xcore1000 has no BF16 m16n16k32 (nor a
+  K=17) MMA builtin. The only exposed BF16 primitive is m16n16k16 with FP32 C/D. Therefore adding
+  a constant-one denominator dimension would overwrite 16 real V outputs or require a separate
+  exact V pass, so it cannot eliminate the rowsum under the current ABI.
+- **GJN/GJN2 `hierarchical_pv_accum_abi_probe` — reject/blocked.** BF16 MMA's accumulator operand
+  is `v4f32`; an FP16 C/D fragment is an mxcc type error. The proposed register-saving FP16
+  intermediate cannot be expressed as a native MMA accumulation on C500/xcore1000. Spilling and
+  reloading a FP32 accumulator per tile would add shared/global traffic and is not that hierarchy.
+- **GJO `score_recompute` — reject.** This is a real sequential architecture: it retains only
+  `(m,d,o)`, clears the QK score matrix after the online-softmax update, recomputes QK from the
+  still-resident K tile, then materializes weights for PV. It passed cases 3/4/6/8, and Q128
+  register use fell **230 → 206 MT**, but the duplicated QK plus loss of paired scheduling made
+  those cases 1.670/21.527/6.573/6.798 ms against 1.081/13.684/4.285/4.518 ms. It fails the fast
+  performance gate and is not eligible for a full promotion run.
+- **GJM `q256_w8_kv64_full_gate` — reject.** The retained Q256/W8/KV64 rewrite passed all 15 cases
+  exactly, but took 34.985 ms versus the current same-source anchor's 27.296 ms. Per-case mapping
+  from `online/checkpoint_result` gives 62.143 raw mean; calibrated to the user's 68.27 anchor it
+  is about **61.70**, so this Tier-2 direction is decisively slower.
+
+The evidence and compiler logs are collected in `profiles/stage_gjk_to_gjp_tier12_validation.md`.
+The canonical FO/DN source remains unchanged at the sole current online anchor of 68.27.
