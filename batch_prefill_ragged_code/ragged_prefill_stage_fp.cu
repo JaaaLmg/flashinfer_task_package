@@ -9335,7 +9335,7 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
 
       produce_v_r_(&v_ptr, v_stride_n, (iter + 1) * CTA_TILE_KV, chunk_size, v_frag);
 
-      enable_igroup_config<1,2,2>();
+      enable_igroup_config();
 
       lds_v<KTraits>(&v_smem, &v_smem_offset_r, v_r_frag);
       // compute attention score
@@ -9350,7 +9350,7 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
 
       sync_threads();
 
-      enable_igroup_config<1,2,2>();
+      enable_igroup_config();
 
       lds_k<KTraits>(&k_smem, &k_smem_offset_r, k_r_frag);
 
@@ -9385,7 +9385,7 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
 
       produce_v_r_(&v_ptr, v_stride_n, (iter + 1) * CTA_TILE_KV, chunk_size, v_frag);
 
-      enable_igroup_config<1,2,2>();
+      enable_igroup_config();
 
       lds_v<KTraits>(&v_smem, &v_smem_offset_r, v_r_frag);
       // compute attention score
@@ -9413,7 +9413,7 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
 
       produce_k_r<KTraits>(&k_ptr, k_stride_n, (iter + 2) * CTA_TILE_KV, chunk_size, k_frag);
 
-      enable_igroup_config<1,2,2>();
+      enable_igroup_config();
 
       // compute sfm*v
       compute_sfm_v_with_perm<KTraits>(s_frag, o_frag, d, v_r_frag);
@@ -9424,7 +9424,6 @@ __device__ __forceinline__ void batch_prefill_with_ragged_kv_cache_kernel_xc1000
     sync_threads();
     if constexpr (CTA_TILE_Q >= 64) {
     uint32_t iter = 0;
-#pragma unroll 1
     for (; iter + 1 < num_iterations; iter += 2) {
       clear<DTypeQKAccum, NUM_MMA_Q * NUM_MMA_KV * 4>(s_frag[0][0]);
       clear<DTypeQKAccum, NUM_MMA_Q * NUM_MMA_KV * 4>(s_frag_next[0][0]);

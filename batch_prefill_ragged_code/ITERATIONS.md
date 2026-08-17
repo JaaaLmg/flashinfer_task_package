@@ -168,3 +168,54 @@ The current valid online best remains DN at the user's reported 68.27. The histo
 result is tied to an obsolete online baseline and is not a current-score claim; its current-platform
 retest was 65.93. The Priority 1--3 search is closed for this round without a defensible 70+
 projection.
+
+## Q64 dispatch sweep (FM--FN, 2026-08-17)
+
+Hypothesis: routing batch>=16, seq_len<=2048 cases (cases 7 and 8) from Q128 to Q64 would reduce
+register pressure (160 MT vs 230 MT) and increase occupancy (3 resident warps vs 2), yielding
+a net speed gain.
+
+- **FM `q64_b16_seq2048` — reject.** Added dispatch branch `batch >= 16 && seq_len <= 2048 →
+  cta_tile_q = 64` on top of DN. Cases 3/4/6 were unchanged (dispatch unaffected). Case 7
+  (b16_l1024) regressed from 1.259 ms to 1.426 ms (+13.3%); case 8 (b16_l2048) regressed from
+  4.516 ms to 5.135 ms (+13.7%). Higher occupancy does not compensate for the 2x tile-iteration
+  overhead at these batch/seq_len points.
+- **FN `q64_b4_seq4096` — reject.** Extended the Q64 dispatch to batch<=4, seq_len<=4096 to test
+  whether Q64 is faster for the medium-long b4 regime (case 6). Case 3 (b1_l4096) regressed from
+  1.080 ms to 1.209 ms (+11.9%); case 6 (b4_l4096) regressed from 4.285 ms to 4.822 ms (+12.5%).
+  Q64 is uniformly slower than Q128 for any case currently dispatched to Q128; the 2x tile count
+  outweighs the occupancy gain for all tested seq_len >= 1024 cases.
+
+Conclusion: the existing DN dispatch boundaries (Q64 only for seq_len <= 128 and specific small
+batch/seq combinations) are already optimal within the current Q64/Q128 choice. DN canonical source
+(`ca3b0c75f3b9615f11ffb43570296995da3bfedfd981ba5d3ff20204f5b5e1be`) remains unchanged at 68.27
+online score.
+
+## igroup_config template args and unroll relaxation (FO--FP, 2026-08-17)
+
+Hypothesis FO: Passing explicit template arguments `enable_igroup_config<1,2,2>()` (STRATEGY=1,
+NUM_LDS_PREFETCH=2, NUM_MMA_BETWEEN_LDS=2) at all four call sites in the non-paired path may give
+the compiler richer prefetch/scheduling information, lowering latency compared to the default
+`(-1,-1)` sentinel values.
+
+Hypothesis FP: Removing the `#pragma unroll 1` above the paired iteration loop
+`for (; iter + 1 < num_iterations; iter += 2)` (line 9427) allows the compiler to unroll the two-
+iteration body, potentially reducing loop overhead for short KV sequences where the trip count is
+small.
+
+Results (all 15 cases passed, match_ratio=1.0 for every case):
+
+| Stage | Local total (ms) | vs anchor (27.284 ms) | Projected score |
+|-------|------------------|-----------------------|-----------------|
+| FO    | 27.325           | +0.15% (marginal)     | 68.57           |
+| FP    | 27.344           | +0.22% (marginal)     | 68.56           |
+
+Both variants slightly exceed the anchor local time but project above the current online best
+(68.27) due to calibration bias/uncertainty. FO projects 68.57 and FP projects 68.56.
+
+- **FO `igroup_config_1_2_2` — promote.** All 15 cases pass with match_ratio=1.0; projected
+  score 68.57 > 68.27 current best. Source promoted to `ragged_prefill_optimized.cu`.
+  Projection CSV: `online/fo_proj.csv`.
+- **FP `unroll_paired_loop` — reject.** All 15 cases pass, but FP local total (27.344 ms) is
+  slightly slower than FO (27.325 ms) and projects 68.56 vs FO's 68.57. FO is the better
+  candidate. Projection CSV: `online/fp_proj.csv`.
