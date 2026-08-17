@@ -130,3 +130,41 @@ the next optimization decision.
 These experiments exhaust the legal larger-tile/warp-ownership combinations exposed by the current
 loader. A score above 70 now requires rewriting the K/V shared-memory producer and fragment mapping,
 not another launch-template selection; DN remains canonical.
+
+## Equal-mask and igroup follow-up (FA--FB, 2026-08-16)
+
+- **FA `equal_mask` — reject.** A separate exact equal-length causal mask (`kv_idx <= q_idx`)
+  preserved 4/4 representative correctness but regressed #4 to 13.847 ms versus DN 13.677 ms.
+- **FB `igroup0` — reject.** Explicit C500 strategy-0 scheduling around QK/PV MMA preserved
+  correctness but was slower (#4 13.763 ms, #8 4.533 ms). DN strategy-1 remains canonical.
+- **FC `q128_sequential` — reject.** Sequential softmax reduced live score state but exposed the
+  pipeline cost: #4 rose to 16.649 ms and #8 to 5.344 ms, despite 4/4 correctness.
+- **FD `no_launch_bounds` — reject.** Removing the ragged kernel launch-bounds annotation did not
+  move the resource point: 4/4 passed and timings were effectively DN (#4 13.682 ms, #8 4.524 ms).
+
+## Priority-1 fragment ownership diagnostic (FG, 2026-08-17)
+
+- **FG `fragment_map_probe` — investigate/reject as an integration basis.** Built and launched a
+  64-lane BF16 m16n16k16 one-hot-B probe using the exact `mma_sync_m16n16k16_row_col_f16f16f32`
+  wrapper from DN.  The resulting 256 probes form 90 non-equivalent output groups rather than a
+  stable one-column-per-register mapping; many one-hot inputs affect broad/nonlocal C-register
+  sets.  This is expected when the compiler's C500 builtin fragment ABI is exercised without the
+  producer-side shared-memory/load convention used by the attention kernel, but it means the
+  probe cannot validate a constant-one PV column or justify an in-place fusion edit.  DN remains
+  canonical.  A real fusion must validate the *actual* `lds_v -> permute_64bx4 -> MMA` fragment
+  path before replacing a V column and recovering it exactly.
+
+## Priority-2/3 architecture probes (FK--FL, 2026-08-17)
+
+- **FK `q256_loader_reconfirm` — reject.** A clean same-environment build of the retained standalone
+  Q256/KV64 loader passed cases 3/4/6/8 exactly, but measured 1.288/18.207/4.968/5.488 ms versus
+  DN's 1.084/13.677/4.289/4.521 ms. The larger tile remains resource limited.
+- **FL `gqa_cooperative_probe` — reject.** Giving Q128 a second KV subgroup and reducing the
+  compile-time KV fragment count to one preserved 4/4 correctness, but did not establish a
+  producer/consumer queue or a gain: 1.091/13.705/4.292/4.528 ms on cases 3/4/6/8. A real GQA
+  design must introduce explicit shared ownership and barriers; this probe is not promotable.
+
+The current valid online best remains DN at the user's reported 68.27. The historical CL 70.27
+result is tied to an obsolete online baseline and is not a current-score claim; its current-platform
+retest was 65.93. The Priority 1--3 search is closed for this round without a defensible 70+
+projection.

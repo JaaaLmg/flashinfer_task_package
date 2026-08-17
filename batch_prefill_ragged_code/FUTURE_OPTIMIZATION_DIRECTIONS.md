@@ -160,3 +160,26 @@ latest checkpoint projection, and the resource profiles cited above. `ITERATIONS
 `candidates.jsonl` retain the conclusions and measurements of rejected candidates; their bulky raw
 CSV/metadata artifacts are intentionally pruned. Raw online reports remain. Intermediate shared
 libraries are disposable and are not retained.
+
+## Priority 1--3 closure after the next architecture pass (2026-08-17)
+
+The remaining unverified directions were tested against the current C500/MACA environment and did
+not produce a promotion candidate:
+
+| priority | candidate | result | decision |
+|---|---|---|---|
+| 1 | FG actual-wrapper fragment probe; FH KV-subfragment rowsum/PV interleave; FI per-Q rowsum/PV interleave | FG did not preserve the producer-side fragment ABI; FH was only 0.26/0.26/0.41/0.30% faster on #3/#4/#6/#8; FI regressed 0.99/1.00/0.27/0.61% | reject/investigate |
+| 2 | FK standalone Q256/KV64 loader reconfirmation | 4/4 correct, but #3/#4/#6/#8 were 1.288/18.207/4.968/5.488 ms versus DN 1.084/13.677/4.289/4.521 ms | reject |
+| 3 | FL two-KV-subgroup GQA cooperative probe (`NUM_MMA_KV=1`, two KV producer subgroups) | 4/4 correct, but #3/#4/#6/#8 were 1.091/13.705/4.292/4.528 ms; no stable gain and no evidence of a reusable producer/consumer queue | reject |
+
+Priority 1 therefore still requires a new, actual `lds_v -> permute_64bx4 -> MMA` fragment
+validator before any constant-one column can be integrated. Priority 2 requires a fresh loader
+rewrite below the Q256 register/stack budget, not another dispatch constant. Priority 3 requires an
+explicit shared queue and ownership protocol; merely increasing `NUM_WARPS_KV` is not that design.
+
+No candidate passed the 5%/8% architecture gates or the full promotion gate, so the canonical
+artifact remains DN, SHA-256
+`ca3b0c75f3b9615f11ffb43570296995da3bfedfd981ba5d3ff20204f5b5e1be`. Its current online anchor is
+68.27. The historical CL 70.266667 result is from a different online-baseline generation and its
+current-platform submission measured 65.93; it must not be selected or presented as a current
+70+ result. This closes this optimization round without claiming an unverified 70+ projection.
