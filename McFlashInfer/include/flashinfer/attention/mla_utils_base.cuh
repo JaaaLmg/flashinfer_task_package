@@ -525,12 +525,18 @@ __device__ __forceinline__ void update_mdo_states_(typename KTraits::SharedStora
     m[0] = max(smem_storage->m_wg[0][warp_idx_in_wg * 16 + lane_idx % 16],
                smem_storage->m_wg[1][warp_idx_in_wg * 16 + lane_idx % 16]);
     float o_scale = math::ptx_exp2(m_prev * sm_scale - m[0] * sm_scale);
+#if defined(MLA_PAGED_STAGE_AV_SKIP_NOOP_RESCALE)
+    if (m[0] != m_prev) {
+#endif
     d[0] *= o_scale;
 #pragma unroll
     for (uint32_t mma_d = 0; mma_d < KTraits::NUM_MMA_D_CKV / 2; ++mma_d) {
       fma_f32x2(&o_frag[mma_d][0], &o_frag[mma_d][0], o_scale);
       fma_f32x2(&o_frag[mma_d][2], &o_frag[mma_d][2], o_scale);
     }
+#if defined(MLA_PAGED_STAGE_AV_SKIP_NOOP_RESCALE)
+    }
+#endif
     auto m_scale = m[0] * sm_scale * -1;
 #pragma unroll
     for (uint32_t mma_kv = 0; mma_kv < KTraits::NUM_MMA_KV / 2; ++mma_kv) {

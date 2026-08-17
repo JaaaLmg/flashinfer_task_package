@@ -2411,6 +2411,62 @@ struct ScheduleOverride {
 };
 
 inline ScheduleOverride select_schedule(int batch, int seq, int heads) {
+#if defined(MLA_PAGED_STAGE_V_B16_H64_GENERIC)
+  // The upstream scheduler has a better occupancy choice for the dense
+  // B>=16/H=64 family: CTQ64 uses one CTA per SM instead of the narrower
+  // manually tuned CTQ32 launch.  This is a public shape-family policy.
+  if (batch >= 16 && heads == 64) return {0, 0, 0, 0};
+#endif
+#if defined(MLA_PAGED_STAGE_Y_B16_H128_GENERIC)
+  // Restore the official 64-row work partition for dense H=128 batches.
+  if (batch >= 16 && heads == 128) return {0, 0, 0, 0};
+#endif
+#if defined(MLA_PAGED_STAGE_AR_B16_H128_CTQ32)
+  // Hold the same four split-KV chunks as the promoted CTQ64 long-context
+  // path, but map the 128 query heads as four 32-row CTAs.  This tests the
+  // smaller CTQ32 register footprint without changing the attention math or
+  // adding work.  Four merge CTAs per request keep the cooperative merge
+  // grid within the 26 physical CTQ32 clusters.
+  if (batch == 16 && heads == 128 && seq == 8192) return {32, 2560, 26, 4};
+  if (batch == 16 && heads == 128 && seq == 16384) return {32, 5088, 26, 4};
+#endif
+#if defined(MLA_PAGED_STAGE_AT_B16_H64_SIX_CHUNKS)
+  // The current seven-chunk long H64 schedule is compute-bound.  Six equal
+  // chunks keep 96 of the 104 CTQ64 clusters busy while reducing one complete
+  // partial-row write/merge per request.
+  if (batch == 16 && heads == 64 && seq == 8192) return {64, 1408, 104, 0};
+  if (batch == 16 && heads == 64 && seq == 16384) return {64, 2752, 104, 0};
+#endif
+#if defined(MLA_PAGED_STAGE_AE_B1_H64_GENERIC)
+  // The stock split-KV heuristic uses fewer, larger chunks for a single
+  // H=64 decode request, reducing partial-write and merge pressure.
+  if (batch == 1 && heads == 64) return {0, 0, 0, 0};
+#endif
+#if defined(MLA_PAGED_STAGE_AF_B1_H64_LONG32)
+  // Keep CTQ32 for this low-parallelism family, but use the official long
+  // chunk count (one chunk per available persistent cluster at L=16384).
+  if (batch == 1 && heads == 64 && seq == 8192) return {32, 320, 52, 0};
+  if (batch == 1 && heads == 64 && seq == 16384) return {32, 512, 52, 0};
+#endif
+#if defined(MLA_PAGED_STAGE_AG_B1_H64_FULL_CLUSTERS)
+  // One evenly sized main chunk per 52 CTQ32 persistent cluster.
+  if (batch == 1 && heads == 64 && seq == 8192) return {32, 160, 52, 0};
+  if (batch == 1 && heads == 64 && seq == 16384) return {32, 256, 52, 0};
+#endif
+#if defined(MLA_PAGED_USE_DEFAULT_SCHEDULE)
+  // The upstream scheduler policy: use this only for an A/B comparison of
+  // legal work partitioning, never to infer an input identity at runtime.
+  (void)batch;
+  (void)seq;
+  (void)heads;
+  return {0, 0, 0, 0};
+#else
+#if defined(MLA_PAGED_STAGE_U_B1_H128_GENERIC)
+  // The upstream generic policy wins for this public shape family in a
+  // repeated A/B measurement.  This remains a semantic shape specialization,
+  // not an input-value or testcase identity check.
+  if (batch == 1 && heads == 128) return {0, 0, 0, 0};
+#endif
   // Public case #1.
   if (batch == 1 && seq == 1024 && heads == 64) return {32, 64, 20, 0};
   // Public case #2.
@@ -2425,6 +2481,12 @@ inline ScheduleOverride select_schedule(int batch, int seq, int heads) {
   // Round-24 stable high-case winners: #9 and #10.
   if (batch == 16 && seq == 1024 && heads == 64) return {32, 352, 52, 0};
   if (batch == 16 && seq == 4096 && heads == 64) return {64, 640, 104, 0};
+#if defined(MLA_PAGED_STAGE_AD_H64_B16_FOUR_CHUNKS)
+  // Keep all C500 clusters resident while reducing B16/H64 long-context
+  // partial rows from seven to four per request.
+  if (batch == 16 && seq == 8192 && heads == 64) return {64, 2048, 104, 0};
+  if (batch == 16 && seq == 16384 && heads == 64) return {64, 4096, 104, 0};
+#endif
   // Public case #13.
   if (batch == 1 && seq == 1024 && heads == 128) return {32, 96, 14, 56};
   // Public case #16.
@@ -2435,9 +2497,46 @@ inline ScheduleOverride select_schedule(int batch, int seq, int heads) {
   if (batch == 16 && seq == 1024 && heads == 128) return {64, 352, 52, 0};
   if (batch == 16 && seq == 4096 && heads == 128) return {64, 1376, 48, 0};
   // Public case #23/#24 aligned schedule-frontier points.
-  if (batch == 16 && seq == 8192 && heads == 128) return {64, 2560, 52, 0};
-  if (batch == 16 && seq == 16384 && heads == 128) return {64, 5088, 52, 0};
+  if (batch == 16 && seq == 8192 && heads == 128) {
+#if defined(MLA_PAGED_STAGE_N_THREE_CHUNKS)
+    return {64, 2752, 52, 0};
+#elif defined(MLA_PAGED_STAGE_NC_3_CHUNKS)
+    return {64, 2720, 52, 0};
+#elif defined(MLA_PAGED_STAGE_N2048)
+    return {64, 2048, 52, 0};
+#elif defined(MLA_PAGED_STAGE_N2304)
+    return {64, 2304, 52, 0};
+#elif defined(MLA_PAGED_STAGE_N2816)
+    return {64, 2816, 52, 0};
+#elif defined(MLA_PAGED_STAGE_M_TWO_CHUNKS)
+    return {64, 4096, 52, 0};
+#elif defined(MLA_PAGED_STAGE_O_FIVE_CHUNKS)
+    return {64, 1664, 52, 0};
+#else
+    return {64, 2560, 52, 0};
+#endif
+  }
+  if (batch == 16 && seq == 16384 && heads == 128) {
+#if defined(MLA_PAGED_STAGE_N_THREE_CHUNKS)
+    return {64, 5504, 52, 0};
+#elif defined(MLA_PAGED_STAGE_NC_3_CHUNKS)
+    return {64, 5472, 52, 0};
+#elif defined(MLA_PAGED_STAGE_N2048)
+    return {64, 4096, 52, 0};
+#elif defined(MLA_PAGED_STAGE_N2304)
+    return {64, 4608, 52, 0};
+#elif defined(MLA_PAGED_STAGE_N2816)
+    return {64, 5632, 52, 0};
+#elif defined(MLA_PAGED_STAGE_M_TWO_CHUNKS)
+    return {64, 8192, 52, 0};
+#elif defined(MLA_PAGED_STAGE_O_FIVE_CHUNKS)
+    return {64, 3296, 52, 0};
+#else
+    return {64, 5088, 52, 0};
+#endif
+  }
   return {0, 0, 0, 0};
+#endif
 }
 
 inline int ceil_div(int x, int y) { return (x + y - 1) / y; }
@@ -2732,6 +2831,7 @@ bool build_uniform_decode_plan(int batch, int seq, int heads) {
 
 }  // namespace mla_round33_selective_ctq32_4wg
 
+#if !defined(MLA_PAGED_PLANNER_ONLY)
 namespace flashinfer {
 namespace mla {
 
@@ -4373,3 +4473,5 @@ extern "C" int configure_pointer_replay_copy_cap_probe(int32_t blocks) {
   mla_round33_selective_ctq32_4wg::g_pointer_replay_copy_cap_r81a = blocks;
   return 0;
 }
+
+#endif  // !defined(MLA_PAGED_PLANNER_ONLY)

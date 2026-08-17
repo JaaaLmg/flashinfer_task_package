@@ -67,6 +67,36 @@ def cases() -> list[Case]:
     ]
 
 
+def online_cases() -> list[Case]:
+    """Published online ordering, kept separate from the local smoke suite."""
+    return [
+        Case(1, "b1_l1024_h64", 1, 1024, 64),
+        Case(2, "b1_l4096_h64", 1, 4096, 64),
+        Case(3, "b1_l8192_h64", 1, 8192, 64),
+        Case(4, "b1_l16384_h64", 1, 16384, 64),
+        Case(5, "b4_l1024_h64", 4, 1024, 64),
+        Case(6, "b4_l4096_h64", 4, 4096, 64),
+        Case(7, "b4_l8192_h64", 4, 8192, 64),
+        Case(8, "b4_l16384_h64", 4, 16384, 64),
+        Case(9, "b16_l1024_h64", 16, 1024, 64),
+        Case(10, "b16_l4096_h64", 16, 4096, 64),
+        Case(11, "b16_l8192_h64", 16, 8192, 64),
+        Case(12, "b16_l16384_h64", 16, 16384, 64),
+        Case(13, "b1_l1024_h128", 1, 1024, 128),
+        Case(14, "b1_l4096_h128", 1, 4096, 128),
+        Case(15, "b1_l8192_h128", 1, 8192, 128),
+        Case(16, "b1_l16384_h128", 1, 16384, 128),
+        Case(17, "b4_l1024_h128", 4, 1024, 128),
+        Case(18, "b4_l4096_h128", 4, 4096, 128),
+        Case(19, "b4_l8192_h128", 4, 8192, 128),
+        Case(20, "b4_l16384_h128", 4, 16384, 128),
+        Case(21, "b16_l1024_h128", 16, 1024, 128),
+        Case(22, "b16_l4096_h128", 16, 4096, 128),
+        Case(23, "b16_l8192_h128", 16, 8192, 128),
+        Case(24, "b16_l16384_h128", 16, 16384, 128),
+    ]
+
+
 def compile_library(source: Path, library: Path, force: bool = False) -> None:
     if library.exists() and not force and library.stat().st_mtime >= source.stat().st_mtime:
         return
@@ -274,6 +304,8 @@ def parse_case_filter(value: str) -> set[int] | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", default="all", help="all or comma-separated case IDs")
+    parser.add_argument("--suite", choices=("smoke", "online"), default="smoke",
+                        help="case table: local smoke coverage or published online order")
     parser.add_argument("--output", type=Path, default=DEFAULT_RESULT)
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--library", type=Path, default=DEFAULT_LIBRARY)
@@ -287,7 +319,8 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("A CUDA/MACA GPU is required")
     selected_ids = parse_case_filter(args.cases)
-    selected = [case for case in cases() if selected_ids is None or case.case_id in selected_ids]
+    suite = online_cases() if args.suite == "online" else cases()
+    selected = [case for case in suite if selected_ids is None or case.case_id in selected_ids]
     if not selected:
         raise ValueError("No cases selected")
 

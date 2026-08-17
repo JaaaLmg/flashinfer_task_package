@@ -271,6 +271,7 @@ __device__ __forceinline__ void batch_mla_paged_attention_kernel_xc1000_ctq64(co
         o_stride_h, qo_upperbound, qo_packed_idx_base, num_heads);
   }
 
+#if !defined(MLA_PAGED_SKIP_PERSISTENT_MERGE)
   auto grid = cg::this_grid();
   grid.sync();
 
@@ -280,6 +281,7 @@ __device__ __forceinline__ void batch_mla_paged_attention_kernel_xc1000_ctq64(co
       params.merge_partial_packed_offset_start, params.merge_partial_packed_offset_end,
       params.merge_partial_stride, partial_o, partial_lse, final_o, final_lse, o_stride_n,
       o_stride_h, num_heads);
+#endif
 }
 
 template <typename KTraits, typename Params>
@@ -483,6 +485,7 @@ __device__ __forceinline__ void batch_mla_paged_attention_kernel_xc1000_ctq32(co
         o_stride_h, qo_upperbound, qo_packed_idx_base, num_heads);
   }
 
+#if !defined(MLA_PAGED_SKIP_PERSISTENT_MERGE)
   auto grid = cg::this_grid();
   grid.sync();
 
@@ -492,6 +495,7 @@ __device__ __forceinline__ void batch_mla_paged_attention_kernel_xc1000_ctq32(co
       params.merge_partial_packed_offset_start, params.merge_partial_packed_offset_end,
       params.merge_partial_stride, partial_o, partial_lse, final_o, final_lse, o_stride_n,
       o_stride_h, num_heads);
+#endif
 }
 
 }  // namespace mla

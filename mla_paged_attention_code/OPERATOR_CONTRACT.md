@@ -136,9 +136,16 @@ McFlashInfer located at `@McFlashInfer/`:
 - Uses CTA-per-batch with shared KV cache across all heads
 - Vectorized 128-bit loads, MMA for QK/PV, split-KV for small batches
 
-## Optimization Direction (NOT to be done yet)
+## Persistent User Constraints
 
-Per user instructions: **First refactor baseline to match reference structure, ensure correctness. DO NOT optimize yet.**
+- Optimize `mla_paged_optimized.cu` toward a conservatively projected online score above 75, using the raw `online/` reports as anchors.
+- Never use the reference file's pointer replay or zero-QPE/KPE assumption: public contract requires arbitrary BF16 QPE/KPE and every invocation must compute from its inputs.
+
+## Optimization Direction
+
+The promoted path uses CTA-level KV reuse, 128-bit transactions and BF16 MMA
+for full CKV+KPE attention, plus split-KV. Continue only with candidates that
+pass the ABI-level full gate and improve the per-case online calibration.
 
 After baseline is confirmed correct on online evaluation, optimization stages:
 1. CTA per batch (all heads share KV) - 64-128x speedup expected
@@ -153,3 +160,13 @@ After baseline is confirmed correct on online evaluation, optimization stages:
 ⏳ Submit baseline to online evaluation (user will do this)
 ⏸️ Wait for online results
 ⏸️ Begin optimization after online baseline confirmed
+
+## Current implementation note
+
+`mla_paged_optimized.cu` is the canonical full-KPE/CKV C500 MMA implementation. It
+uses the tuned persistent split-KV schedule and exact same-stream merge repair;
+the official 24-case online proxy passes 24/24 and permuted-page regression passes
+4/4. The conservative local-to-online projection is approximately 72.44, below
+the requested 75 threshold; no score claim above 75 is made. Uniform decode
+metadata is the currently measured fast-path contract, while the scalar fallback
+remains metadata-aware for nonuniform/odd public shapes.

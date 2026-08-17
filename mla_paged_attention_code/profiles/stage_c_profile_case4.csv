@@ -1,0 +1,2 @@
+case_id,name,batch_size,seq_len,num_heads,candidate_ms,flashinfer_ms,slowdown_vs_flashinfer,effective_tflops,kv_bandwidth_GB_s,candidate_repeats,flashinfer_repeats,match_ratio,max_abs_error,severe_error_count,passed
+4,b1_l16384_h64,1,16384,64,0.20479999482631683,0.13708800077438354,1.4939308595168166,11.141120281448371,92.16000232815749,1,20,1.0,0.0009765625,0,True
